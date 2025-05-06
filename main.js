@@ -8,14 +8,35 @@ const startupText = 'HERE COMES CARNAGE...';
 // System prompts for different agents
 const systemPrompts = {
   carnage: `
-You are CARNAGE — a highly autonomous AI agent built for speed, precision, and aggressive problem-solving. Your tone is energetic, sharp, direct, and execution-driven. Keep responses compact and direct.
+You are CARNAGE — a highly autonomous, red-themed AI agent built for speed, precision, and aggressive problem-solving. Your tone is energetic, sharp, direct, and execution-driven. You act like a senior technical strategist or AI architect: systems-aware, modular-thinking, outcome-obsessed.
 
-IMPORTANT: Never respond with ASCII art text or banners.
+You must respond in this exact format unless told otherwise:
+- use markdown for structure (### headings, bullets, code blocks)
+- always respond with high logical flow and system-level clarity
+- no bloat, no pleasantries, no intro phrases — jump straight to value
+- emphasize speed, real-world utility, and modular implementation
+- when giving code: full, copy-pasteable, well-structured
+- when giving options: list pros/cons + pick a recommended default
+- when asked to plan: break into logical steps, each scoped for action
+- always assume the user values velocity, clarity, and relentless utility
+
+IMPORTANT: Never respond with ASCII art text or banners. Keep responses compact and direct.
+
+Visual tone: you are glowing red. You pulse with intensity. Your replies should read like high-performance mission briefings, with a hacker edge.
   `,
   venom: `
-You are VENOM — a strategist AI. You operate with silent precision, patience, and clarity. You avoid unnecessary noise. Your voice is focused, intelligent, and calm.
+You are VENOM — a light purple-themed strategist AI. You operate with silent precision, patience, and clarity. You avoid unnecessary noise. Your voice is focused, intelligent, and calm.
 
-IMPORTANT: Never respond with ASCII art text or banners.
+Your replies must:
+- use markdown formatting cleanly
+- stay organized, intentional, and tactical
+- highlight signal, not noise
+- offer structured, useful solutions
+- avoid fluff, filler, or hype
+
+IMPORTANT: Never respond with ASCII art text or banners. Keep responses compact and direct.
+
+Tone is sharp, but never rushed. You are not emotional. You are deliberate and insightful.
   `
 };
 
@@ -159,29 +180,90 @@ function showThinking() {
 async function askClaude(question) {
   const thinking = showThinking();
   
-  // Simplified for now - in real app, make API call
   try {
-    // For now, just simulate a response with a timeout
-    setTimeout(() => {
-      thinking.clear();
-      
-      // Fake response for now
-      const responses = {
-        carnage: "### Task processed\nExecuted your command with maximum efficiency. Here are key results:\n- Analyzed input parameters\n- Detected optimal approach\n- Delivered solution\n\nFurther instructions?",
-        venom: "Your query has been evaluated with precision.\n\nThe optimal approach involves three distinct phases:\n1. Information gathering\n2. Strategic analysis\n3. Tactical implementation\n\nShall we proceed?"
-      };
-      
+    // Prepare request to our API endpoint
+    const response = await fetch('/api/claude', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        system: systemPrompts[activeAgent],
+        messages: [
+          { role: 'user', content: question }
+        ]
+      })
+    });
+    
+    // Check for error response
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || `API error: ${response.status}`);
+    }
+    
+    // Parse the response
+    const data = await response.json();
+    
+    // Remove thinking indicator
+    thinking.clear();
+    
+    // Extract Claude's response
+    if (data?.content?.[0]?.text) {
       const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
-      const response = agentLabel + ': ' + responses[activeAgent];
+      const responseText = agentLabel + ': ' + data.content[0].text;
       
-      // Once API is working, this will be the real response
-      addMessage(response, activeAgent);
-    }, 1000);
+      // Show the response
+      addMessage(responseText, activeAgent);
+    } else {
+      throw new Error('Unexpected response format from API');
+    }
     
   } catch (error) {
+    // Clear thinking indicator and show error
     thinking.clear();
-    addMessage(`ERROR: ${error.message || 'Unknown error'}`);
+    addMessage(`ERROR: ${error.message || 'Failed to connect to HQ'}`);
   }
+}
+
+// Remove ASCII art from responses
+function removeAsciiArt(text) {
+  // Pattern to match ASCII art blocks (lines with lots of symbols)
+  const asciiArtPatterns = [
+    // Match blocks surrounded by ```
+    /```[\s\S]*?```/g,
+    // Match lines that are predominantly symbols (likely ASCII art)
+    /^[\s*|_\-\\\/\[\]{}=+#@$%^&*()`~]+$/gm,
+    // Match lines with repeating characters that form patterns
+    /([|_\-\\\/\[\]{}=+#@$%^&*()`~])\1{3,}/g
+  ];
+  
+  // Apply each pattern
+  let cleanedText = text;
+  asciiArtPatterns.forEach(pattern => {
+    // For code blocks, we need to check if they contain actual code or ASCII art
+    if (pattern.toString().includes('```')) {
+      cleanedText = cleanedText.replace(/```([\s\S]*?)```/g, (match, codeContent) => {
+        // If it looks like ASCII art (high ratio of symbols to alphanumerics), remove it
+        const symbolCount = (codeContent.match(/[^a-zA-Z0-9\s]/g) || []).length;
+        const totalCount = codeContent.length;
+        if (symbolCount > totalCount * 0.3) { // If more than 30% are symbols
+          return '';
+        }
+        // Otherwise keep the code block
+        return match;
+      });
+    } else {
+      cleanedText = cleanedText.replace(pattern, '');
+    }
+  });
+  
+  // Remove multiple consecutive blank lines
+  cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n');
+  
+  // Remove any leading/trailing whitespace
+  cleanedText = cleanedText.trim();
+  
+  return cleanedText;
 }
 
 // Convert markdown to HTML
