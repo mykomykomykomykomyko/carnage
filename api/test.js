@@ -1,6 +1,6 @@
 // Simple API test endpoint
 export default function handler(req, res) {
-  // Add CORS headers
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -15,7 +15,7 @@ export default function handler(req, res) {
   // Return a simple JSON response
   res.status(200).json({
     success: true,
-    message: "API endpoint working correctly",
+    message: "API test endpoint working correctly",
     apiKey: process.env.CLAUDE_API_KEY ? "API key is configured" : "API key is missing",
     timestamp: new Date().toISOString()
   });
