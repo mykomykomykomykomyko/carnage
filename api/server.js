@@ -6,8 +6,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// API key for Anthropic's Claude API
-const API_KEY = 'put your key';
+// Get API key from environment variables
+const API_KEY = process.env.CLAUDE_API_KEY;
 
 // Set a shorter timeout for the API requests
 const API_TIMEOUT = 15000; // 15 seconds
@@ -15,6 +15,14 @@ const API_TIMEOUT = 15000; // 15 seconds
 // Claude API endpoint
 app.post('/api/claude', async (req, res) => {
   try {
+    // Check if API key is configured
+    if (!API_KEY) {
+      return res.status(500).json({ 
+        error: 'server_configuration_error', 
+        message: 'API key not configured on server'
+      });
+    }
+
     // Ensure we don't request ASCII art
     if (req.body.system && !req.body.system.includes('Never respond with ASCII art')) {
       req.body.system += '\n\nIMPORTANT: Never respond with ASCII art or text banners. Keep responses direct and concise.';
@@ -57,7 +65,11 @@ app.post('/api/claude', async (req, res) => {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.status(200).send('Server is running');
+  res.status(200).json({ 
+    status: 'ok',
+    message: 'Server is running',
+    apiKeyConfigured: !!API_KEY
+  });
 });
 
 // Export the Express API for Vercel
