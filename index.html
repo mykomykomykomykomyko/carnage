@@ -1,28 +1,53 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CARNAGE Terminal</title>
-  <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet" />
 </head>
-<body data-agent="carnage">
-  <div id="terminal">
-    <div id="startup" class="screen">
-      <h1>CARNAGE</h1>
-      <div id="startupText"></div>
-    </div>
-    
-    <div id="chat" class="screen hidden">
-      <div id="output"></div>
-      <div id="inputContainer">
-        <div id="inputPrompt">&gt;</div>
-        <input id="input" type="text" placeholder="Type a command..." autofocus>
+<body>
+    <div id="nav">
+        <div class="nav-actions">
+          <button onclick="location.reload()">REBOOT</button>
+          <button onclick="alert('LOGGING...')">LOG</button>
+          <button onclick="alert('SYSTEM STABLE')">STATUS</button>
+        </div>
+      </div>  
+    <div id="sidebar">
+        <button data-agent="carnage" onclick="switchAgent('carnage')">CARNAGE</button>
+        <button data-agent="venom" onclick="switchAgent('venom')">VENOM</button>
+    </div>          
+ <div class="crt">
+  <div id="startup" class="screen">
+    <pre id="asciiArt">
+      _____         _____        _____  _____   ______         _____         _____         ______   
+  ___|\    \    ___|\    \   ___|\    \|\    \ |\     \    ___|\    \    ___|\    \    ___|\     \  
+ /    /\    \  /    /\    \ |    |\    \\\    \| \     \  /    /\    \  /    /\    \  |     \     \ 
+|    |  |    ||    |  |    ||    | |    |\|    \  \     ||    |  |    ||    |  |____| |     ,_____/|
+|    |  |____||    |__|    ||    |/____/  |     \  |    ||    |__|    ||    |    ____ |     \--'\_|/
+|    |   ____ |    .--.    ||    |\    \  |      \ |    ||    .--.    ||    |   |    ||     /___/|  
+|    |  |    ||    |  |    ||    | |    | |    |\ \|    ||    |  |    ||    |   |_,  ||     \____|\ 
+|\ ___\/    /||____|  |____||____| |____| |____||\_____/||____|  |____||\ ___\___/  /||____ '     /|
+| |   /____/ ||    |  |    ||    | |    | |    |/ \|   |||    |  |    || |   /____ / ||    /_____/ |
+ \|___|    | /|____|  |____||____| |____| |____|   |___|/|____|  |____| \|___|    | / |____|     | /
+   \( |____|/   \(      )/    \(     )/     \(       )/    \(      )/     \( |____|/    \( |_____|/ 
+    '   )/       '      '      '     '       '       '      '      '       '   )/        '    )/    
+        '                                                                      '              '     
+    </pre>
+    <div id="startupText"></div>
+  </div>
+  <div id="chat" class="screen hidden">
+    <div id="chatWindow"></div>
+    <div id="inputContainer">
+      <div id="inputBox">
+        <span>&gt;</span><input id="chatInput" type="text" placeholder="type your command..." />
       </div>
+      <div id="enterHint">ENTER</div>
     </div>
   </div>
-
-  <script src="main.js"></script>
+</div>
+<script src="main.js"></script>
 </body>
 </html>
