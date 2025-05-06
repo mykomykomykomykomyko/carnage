@@ -251,28 +251,108 @@ async function testApiConnection() {
   }
 }
 
-// Ask Claude API with simulated response for now
+// Ask Claude API - now using the real API!
 async function askClaude(question) {
   const thinking = showThinking();
   
-  // Simulate network delay
-  setTimeout(() => {
+  try {
+    console.log('Sending request to Claude API...');
+    
+    // Prepare request to our API endpoint
+    const response = await fetch('/api/claude', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        system: systemPrompts[activeAgent],
+        messages: [
+          { role: 'user', content: question }
+        ]
+      })
+    });
+    
+    // Check for non-JSON responses
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      const textContent = await response.text();
+      thinking.clear();
+      console.error('Non-JSON response:', textContent.substring(0, 200));
+      addMessage(`SYSTEM: API returned non-JSON response. Please check server logs.`);
+      return;
+    }
+    
+    // Parse the response
+    const data = await response.json();
+    
+    // Check for error response
+    if (!response.ok) {
+      throw new Error(data.message || `API error: ${response.status}`);
+    }
+    
+    console.log('Response received from Claude API');
+    
+    // Remove thinking indicator
     thinking.clear();
     
-    // Create fake responses
-    const fakeResponses = {
-      carnage: "### Command executed\n\nTask analyzed and completed with maximum efficiency.\n\n- Input processed\n- Solution generated\n- Output delivered\n\nFurther instructions?",
-      venom: "Analysis complete.\n\nYour request has been processed with precision. Key findings:\n\n1. Parameters assessed\n2. Strategic approach identified\n3. Tactical solution formulated\n\nHow would you like to proceed?"
-    };
+    // Extract Claude's response
+    if (data?.content?.[0]?.text) {
+      const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
+      const responseText = agentLabel + ': ' + data.content[0].text;
+      
+      // Show the response
+      addMessage(responseText, activeAgent);
+    } else {
+      throw new Error('Unexpected response format from API');
+    }
     
-    const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
-    const response = agentLabel + ': ' + fakeResponses[activeAgent];
-    
-    // Show fake response
-    addMessage(response, activeAgent);
-    
-    addMessage("SYSTEM: Note: This is a simulated response while we resolve API connectivity issues.", "system");
-  }, 1000);
+  } catch (error) {
+    // Clear thinking indicator and show error
+    thinking.clear();
+    console.error('Error in askClaude:', error);
+    addMessage(`SYSTEM: API error: ${error.message || 'Unknown error'}`);
+  }
+}
+
+// Remove ASCII art from responses
+function removeAsciiArt(text) {
+  // Pattern to match ASCII art blocks (lines with lots of symbols)
+  const asciiArtPatterns = [
+    // Match blocks surrounded by ```
+    /```[\s\S]*?```/g,
+    // Match lines that are predominantly symbols (likely ASCII art)
+    /^[\s*|_\-\\\/\[\]{}=+#@$%^&*()`~]+$/gm,
+    // Match lines with repeating characters that form patterns
+    /([|_\-\\\/\[\]{}=+#@$%^&*()`~])\1{3,}/g
+  ];
+  
+  // Apply each pattern
+  let cleanedText = text;
+  asciiArtPatterns.forEach(pattern => {
+    // For code blocks, we need to check if they contain actual code or ASCII art
+    if (pattern.toString().includes('```')) {
+      cleanedText = cleanedText.replace(/```([\s\S]*?)```/g, (match, codeContent) => {
+        // If it looks like ASCII art (high ratio of symbols to alphanumerics), remove it
+        const symbolCount = (codeContent.match(/[^a-zA-Z0-9\s]/g) || []).length;
+        const totalCount = codeContent.length;
+        if (symbolCount > totalCount * 0.3) { // If more than 30% are symbols
+          return '';
+        }
+        // Otherwise keep the code block
+        return match;
+      });
+    } else {
+      cleanedText = cleanedText.replace(pattern, '');
+    }
+  });
+  
+  // Remove multiple consecutive blank lines
+  cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n');
+  
+  // Remove any leading/trailing whitespace
+  cleanedText = cleanedText.trim();
+  
+  return cleanedText;
 }
 
 // Convert markdown to HTML
