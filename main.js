@@ -816,8 +816,8 @@ function handleCommand(command) {
             updateUserInList(clientId, username);
           }
           
-          // Try to update username on server if in a regular session
-          if (sessionId && clientId) {
+          // Notify other users about the username change
+          if (sessionId) {
             updateUsernameOnServer(oldUsername, username);
           }
         } else {
@@ -856,16 +856,71 @@ function handleCommand(command) {
   }
 }
 
-// Update username on server
+// Update username on server and notify other users
 async function updateUsernameOnServer(oldUsername, newUsername) {
   try {
-    // Don't actually make this call if the API endpoint doesn't exist
-    // Just log that we would do it in a full implementation
-    console.log(`Would update username on server from ${oldUsername} to ${newUsername}`);
+    // Only attempt if we're in a session
+    if (!sessionId || !clientId) {
+      return;
+    }
+
+    console.log(`Updating username from ${oldUsername} to ${newUsername}`);
     
-    // In a full implementation, the code would look like this:
-    /*
-    const response = await fetch('/api/updateUsername', {
+    // For custom sessions, we manually broadcast the message to simulate server
+    if (document.getElementById('customSessionId').value.trim() === sessionId) {
+      // Update locally first
+      if (sessionUsers[clientId]) {
+        sessionUsers[clientId].username = newUsername;
+      }
+      
+      // Simulate a broadcast message to all users in the session
+      const message = `SYSTEM: ${oldUsername} is now known as ${newUsername}`;
+      addMessage(message, 'system');
+      
+      return;
+    }
+    
+    // For regular sessions, try the API if it exists
+    try {
+      const response = await fetch('/api/session/username', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sessionId,
+          clientId,
+          oldUsername,
+          newUsername
+        })
+      });
+      
+      if (!response.ok) {
+        console.log('Username update API not available, using message-based approach');
+        
+        // Fallback: Send a system message that will be seen by all users
+        sendSystemMessageToAll(`${oldUsername} is now known as ${newUsername}`);
+      }
+    } catch (error) {
+      console.error('Error updating username via API:', error);
+      
+      // Fallback: Send a system message that will be seen by all users
+      sendSystemMessageToAll(`${oldUsername} is now known as ${newUsername}`);
+    }
+  } catch (error) {
+    console.error('Error in updateUsernameOnServer:', error);
+  }
+}
+
+// Send a system message that all users in the session will see
+async function sendSystemMessageToAll(message) {
+  try {
+    if (!sessionId || !clientId) {
+      return;
+    }
+    
+    // Try to use the message API to send the system message
+    await fetch('/api/session/message', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -873,17 +928,12 @@ async function updateUsernameOnServer(oldUsername, newUsername) {
       body: JSON.stringify({
         sessionId,
         clientId,
-        oldUsername,
-        newUsername
+        message: message,
+        type: 'system'
       })
     });
-    
-    if (!response.ok) {
-      console.error(`Server returned ${response.status} when updating username`);
-    }
-    */
   } catch (error) {
-    console.error('Error updating username on server:', error);
+    console.error('Error sending system message:', error);
   }
 }
 
