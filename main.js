@@ -88,18 +88,38 @@ function handleCommand(command) {
         break;
       case '/venom':
         if (args) {
+          // Switch to Venom, ask Claude, then switch back
+          const prevAgent = activeAgent;
           activeAgent = 'venom';
           document.body.setAttribute('data-agent', 'venom');
-          askClaude(args);
-          activeAgent = 'carnage';
-          document.body.setAttribute('data-agent', 'carnage');
+          askClaude(args).then(() => {
+            // Switch back after response is received
+            activeAgent = prevAgent;
+            document.body.setAttribute('data-agent', prevAgent);
+          }).catch(error => {
+            console.error("Error in venom command:", error);
+            // Make sure we switch back even on error
+            activeAgent = prevAgent;
+            document.body.setAttribute('data-agent', prevAgent);
+          });
         } else {
           addMessage("SYSTEM: Please provide a message for VENOM");
         }
         break;
+      case '/carnage': // Added this case to handle /carnage command
       case '/claude':
         if (args) {
-          askClaude(args);
+          // Ensure we're using Carnage for these commands
+          const prevAgent = activeAgent;
+          activeAgent = 'carnage';
+          document.body.setAttribute('data-agent', 'carnage');
+          askClaude(args).then(() => {
+            // Reset to previous agent if needed
+            if (prevAgent !== 'carnage') {
+              activeAgent = prevAgent;
+              document.body.setAttribute('data-agent', prevAgent);
+            }
+          });
         } else {
           addMessage("SYSTEM: Please provide a message for CARNAGE");
         }
@@ -116,7 +136,7 @@ function handleCommand(command) {
         addMessage(`SYSTEM: Unknown command: ${cmd}`);
     }
   } else {
-    // Treat as a question for Claude
+    // Treat as a question for the current agent
     askClaude(command);
   }
 }
@@ -128,11 +148,12 @@ AVAILABLE COMMANDS:
 
 /help - Show this help message
 /claude [message] - Ask CARNAGE specifically
+/carnage [message] - Alternative way to ask CARNAGE
 /venom [message] - Ask VENOM instead
 /test - Test API connection
 /api - Check base API endpoint
 
-You can also type any message directly to ask CARNAGE.
+You can also type any message directly to ask the current agent.
   `;
   
   addMessage("SYSTEM: " + helpText);
@@ -256,7 +277,7 @@ async function askClaude(question) {
   const thinking = showThinking();
   
   try {
-    console.log('Sending request to Claude API...');
+    console.log('Sending request to Claude API with agent:', activeAgent);
     
     // Prepare request to our API endpoint
     const response = await fetch('/api/claude', {
@@ -290,7 +311,7 @@ async function askClaude(question) {
       throw new Error(data.message || `API error: ${response.status}`);
     }
     
-    console.log('Response received from Claude API');
+    console.log('Response received from Claude API for agent:', activeAgent);
     
     // Remove thinking indicator
     thinking.clear();
@@ -311,6 +332,7 @@ async function askClaude(question) {
     thinking.clear();
     console.error('Error in askClaude:', error);
     addMessage(`SYSTEM: API error: ${error.message || 'Unknown error'}`);
+    throw error; // Re-throw for promise chaining
   }
 }
 
