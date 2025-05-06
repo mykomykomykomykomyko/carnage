@@ -1,5 +1,5 @@
 {
-  "name": "carnage-multiplayer",
+  "name": "carnage-terminal",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -7,11 +7,7 @@
     "dev": "vercel dev"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "node-fetch": "^3.3.2",
-    "pusher": "^5.2.0",
-    "uuid": "^9.0.1"
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "vercel": "^33.0.0"
