@@ -186,97 +186,87 @@ async function testApiConnection() {
   const thinking = showThinking();
   
   try {
+    console.log('Testing API connection...');
+    
     // Make a simple fetch request to check if the API is accessible
-    const response = await fetch('/api/claude', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: 'user', content: 'This is a test' }
-        ]
-      })
+    const response = await fetch('/api/test', {
+      method: 'GET'
     });
     
     thinking.clear();
+    console.log('Test response status:', response.status);
+    
+    // For debugging, log the response headers
+    console.log('Response headers:', [...response.headers.entries()]);
+    
+    // Create a response clone before reading the body
+    const responseClone = response.clone();
     
     if (response.ok) {
-      addMessage('SYSTEM: API connection test successful! The API endpoint is accessible.');
+      try {
+        const data = await responseClone.json();
+        console.log('Test response data:', data);
+        addMessage(`SYSTEM: API connection test successful! The API is working properly.`);
+        
+        // Check if API key is configured
+        if (data.apiKey) {
+          addMessage(`SYSTEM: ${data.apiKey}`);
+        }
+      } catch (jsonError) {
+        console.error('Error parsing JSON:', jsonError);
+        
+        // If JSON parsing fails, get the text
+        const textContent = await response.text();
+        console.log('Test response text:', textContent.substring(0, 200));
+        addMessage(`SYSTEM: API returned non-JSON response: ${textContent.substring(0, 100)}...`);
+      }
     } else {
       // Try to get error information
-      let errorInfo = 'Unknown error';
       try {
-        const errorData = await response.json();
-        errorInfo = errorData.message || `Status: ${response.status}`;
-      } catch (parseError) {
+        const errorData = await responseClone.json();
+        console.error('Error data:', errorData);
+        addMessage(`SYSTEM: API connection test failed: ${JSON.stringify(errorData)}`);
+      } catch (jsonError) {
+        console.error('Error parsing error JSON:', jsonError);
+        
         // If we can't parse JSON, get text content
         const textContent = await response.text();
-        errorInfo = `Status: ${response.status}, Content: ${textContent.substring(0, 100)}...`;
+        console.log('Error response text:', textContent.substring(0, 200));
+        addMessage(`SYSTEM: API test failed with status ${response.status}. Response: ${textContent.substring(0, 100)}...`);
       }
-      
-      addMessage(`SYSTEM: API connection test failed: ${errorInfo}`);
     }
   } catch (error) {
+    console.error('Test error:', error);
     thinking.clear();
     addMessage(`SYSTEM: API connection error: ${error.message}`);
   }
 }
 
-// Ask Claude API
+// Ask Claude API with simulated response for now
 async function askClaude(question) {
   const thinking = showThinking();
   
   try {
-    console.log('Sending request to Claude API...');
+    console.log('Preparing fake Claude API response...');
     
-    // Prepare request to our API endpoint
-    const response = await fetch('/api/claude', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        system: systemPrompts[activeAgent],
-        messages: [
-          { role: 'user', content: question }
-        ]
-      })
-    });
-    
-    // For non-JSON responses (like HTML error pages)
-    if (!response.headers.get('content-type')?.includes('application/json')) {
-      const textContent = await response.text();
+    // Set timeout to simulate network delay
+    setTimeout(() => {
       thinking.clear();
       
-      console.error('Non-JSON response:', textContent.substring(0, 200));
-      addMessage(`ERROR: API returned non-JSON response. Check your API endpoint.`);
-      return;
-    }
-    
-    // Parse the response (should be JSON)
-    const data = await response.json();
-    
-    // Check for error response
-    if (!response.ok) {
-      throw new Error(data.message || `API error: ${response.status}`);
-    }
-    
-    console.log('Response received:', data);
-    
-    // Remove thinking indicator
-    thinking.clear();
-    
-    // Extract Claude's response
-    if (data?.content?.[0]?.text) {
-      const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
-      const responseText = agentLabel + ': ' + data.content[0].text;
+      // Create fake responses for now
+      const fakeResponses = {
+        carnage: "### Command executed\n\nTask analyzed and completed with maximum efficiency.\n\n- Input processed\n- Solution generated\n- Output delivered\n\nFurther instructions?",
+        venom: "Analysis complete.\n\nYour request has been processed with precision. Key findings:\n\n1. Parameters assessed\n2. Strategic approach identified\n3. Tactical solution formulated\n\nHow would you like to proceed?"
+      };
       
-      // Show the response
-      addMessage(responseText, activeAgent);
-    } else {
-      throw new Error('Unexpected response format from API');
-    }
+      const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
+      const response = agentLabel + ': ' + fakeResponses[activeAgent];
+      
+      // Show fake response - we'll implement real API calls later
+      addMessage(response, activeAgent);
+      
+      addMessage("SYSTEM: Note: This is a simulated response. Real Claude API integration coming soon.", "system");
+    }, 1000);
     
   } catch (error) {
     // Clear thinking indicator and show error
@@ -284,47 +274,6 @@ async function askClaude(question) {
     console.error('Error in askClaude:', error);
     addMessage(`ERROR: ${error.message || 'Failed to connect to HQ'}`);
   }
-}
-
-// Remove ASCII art from responses
-function removeAsciiArt(text) {
-  // Pattern to match ASCII art blocks (lines with lots of symbols)
-  const asciiArtPatterns = [
-    // Match blocks surrounded by ```
-    /```[\s\S]*?```/g,
-    // Match lines that are predominantly symbols (likely ASCII art)
-    /^[\s*|_\-\\\/\[\]{}=+#@$%^&*()`~]+$/gm,
-    // Match lines with repeating characters that form patterns
-    /([|_\-\\\/\[\]{}=+#@$%^&*()`~])\1{3,}/g
-  ];
-  
-  // Apply each pattern
-  let cleanedText = text;
-  asciiArtPatterns.forEach(pattern => {
-    // For code blocks, we need to check if they contain actual code or ASCII art
-    if (pattern.toString().includes('```')) {
-      cleanedText = cleanedText.replace(/```([\s\S]*?)```/g, (match, codeContent) => {
-        // If it looks like ASCII art (high ratio of symbols to alphanumerics), remove it
-        const symbolCount = (codeContent.match(/[^a-zA-Z0-9\s]/g) || []).length;
-        const totalCount = codeContent.length;
-        if (symbolCount > totalCount * 0.3) { // If more than 30% are symbols
-          return '';
-        }
-        // Otherwise keep the code block
-        return match;
-      });
-    } else {
-      cleanedText = cleanedText.replace(pattern, '');
-    }
-  });
-  
-  // Remove multiple consecutive blank lines
-  cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n');
-  
-  // Remove any leading/trailing whitespace
-  cleanedText = cleanedText.trim();
-  
-  return cleanedText;
 }
 
 // Convert markdown to HTML
