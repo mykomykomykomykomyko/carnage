@@ -14,7 +14,9 @@ const asciiArt = `
     '   )/       '      '      '     '       '       '      '      '       '   )/        '    )/    
         '                                                                      '              '     `;
 
-
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('asciiArt').textContent = asciiArt;
+  const asciiElement = document.getElementById('asciiArt');
+  if (asciiElement) {
+    asciiElement.textContent = asciiArt;
+  }
 });
