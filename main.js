@@ -6,12 +6,8 @@ let activeAgent = 'carnage';
 let clientId = null;
 let username = null;
 let sessionId = null;
-let pusher = null;
-let channel = null;
-
-// Pusher credentials
-const PUSHER_KEY = '49fa5db19939b47d29b1';
-const PUSHER_CLUSTER = 'us3';
+let sessionUsers = {};
+let pollingInterval = null; // For session updates
 
 // Startup animation text
 const startupText = 'HERE COMES CARNAGE...';
@@ -244,43 +240,12 @@ function setupMultiplayerUI() {
   updateStatus('Ready to connect');
 }
 
-// Function to initialize Pusher connection
-function initPusher() {
-  if (pusher) {
-    // Already initialized
-    return;
-  }
-  
-  try {
-    // Initialize Pusher
-    pusher = new Pusher(PUSHER_KEY, {
-      cluster: PUSHER_CLUSTER,
-      forceTLS: true,
-      authEndpoint: '/api/pusher/auth',
-      auth: {
-        params: {
-          username: username
-        }
-      }
-    });
-    
-    console.log('Pusher initialized');
-    updateStatus('Connected to CARNAGE network');
-  } catch (error) {
-    console.error('Error initializing Pusher:', error);
-    updateStatus('Connection error: ' + error.message);
-  }
-}
-
 // Create a new session
 async function createSession() {
   updateStatus('Creating session...');
   
   try {
-    // Initialize Pusher if not already done
-    initPusher();
-    
-    // Create a new session on the server
+    // Request to create a new session
     const response = await fetch('/api/session', {
       method: 'POST',
       headers: {
@@ -290,6 +255,10 @@ async function createSession() {
         action: 'create'
       })
     });
+    
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+    }
     
     const data = await response.json();
     
@@ -302,6 +271,7 @@ async function createSession() {
   } catch (error) {
     console.error('Error creating session:', error);
     updateStatus('Error: ' + error.message);
+    addMessage(`SYSTEM: Error creating session: ${error.message}`, 'system');
   }
 }
 
@@ -323,9 +293,6 @@ async function joinSession(id) {
   updateStatus('Joining session...');
   
   try {
-    // Initialize Pusher if not already done
-    initPusher();
-    
     // Request to join the session
     const response = await fetch('/api/session', {
       method: 'POST',
@@ -340,6 +307,10 @@ async function joinSession(id) {
       })
     });
     
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+    }
+    
     const data = await response.json();
     
     if (!data.success) {
@@ -350,9 +321,7 @@ async function joinSession(id) {
     sessionId = data.sessionId;
     clientId = data.clientId;
     username = data.username;
-    
-    // Subscribe to session channel
-    subscribeToSessionChannel();
+    sessionUsers = data.users || {};
     
     // Update UI
     document.getElementById('sessionIdDisplay').textContent = sessionId;
@@ -363,61 +332,56 @@ async function joinSession(id) {
     addMessage(`SYSTEM: You joined session ${sessionId}`, 'system');
     
     // Update user list
-    updateUserList(data.users);
+    updateUserList(sessionUsers);
+    
+    // Start polling for session updates
+    startPolling();
   } catch (error) {
     console.error('Error joining session:', error);
     updateStatus('Error: ' + error.message);
+    addMessage(`SYSTEM: Error joining session: ${error.message}`, 'system');
   }
 }
 
-// Subscribe to the session channel
-function subscribeToSessionChannel() {
-  // Unsubscribe from previous channel if any
-  if (channel) {
-    channel.unsubscribe();
+// Start polling for session updates
+function startPolling() {
+  // Stop existing polling if any
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
   }
   
-  // Subscribe to the presence channel for this session
-  const channelName = `presence-session-${sessionId}`;
-  channel = pusher.subscribe(channelName);
-  
-  // Set up channel event handlers
-  channel.bind('pusher:subscription_succeeded', (members) => {
-    console.log('Successfully subscribed to channel with', members.count, 'members');
-  });
-  
-  channel.bind('pusher:member_added', (member) => {
-    addMessage(`SYSTEM: ${member.info.username} joined the session`, 'system');
-    addUserToList(member.id, member.info.username);
-  });
-  
-  channel.bind('pusher:member_removed', (member) => {
-    addMessage(`SYSTEM: ${member.info.username} left the session`, 'system');
-    removeUserFromList(member.id);
-  });
-  
-  // Custom events
-  channel.bind('user-message', (data) => {
-    // Only show messages from others
-    if (data.clientId !== clientId) {
-      addMessage(`${data.username}: ${data.message}`, 'user');
+  // Poll every 5 seconds
+  pollingInterval = setInterval(async () => {
+    if (!sessionId) {
+      clearInterval(pollingInterval);
+      return;
     }
-  });
-  
-  channel.bind('claude-thinking', (data) => {
-    // Show thinking indicator
-    showThinking(data.agentType || activeAgent);
-  });
-  
-  channel.bind('claude-response', (data) => {
-    // Remove thinking indicators
-    const thinkingMessages = document.querySelectorAll('.message.thinking');
-    thinkingMessages.forEach(msg => msg.remove());
     
-    // Show claude response
-    const agentLabel = data.agentType === 'venom' ? 'VENOM' : 'CARNAGE';
-    addMessage(`${agentLabel}: ${data.message}`, data.agentType);
-  });
+    try {
+      // Get session info
+      const response = await fetch(`/api/session?sessionId=${sessionId}`);
+      
+      if (!response.ok) {
+        console.error(`Error polling session: ${response.status}`);
+        return;
+      }
+      
+      const data = await response.json();
+      
+      if (!data.success) {
+        console.error('Error polling session:', data.message);
+        return;
+      }
+      
+      // Update UI if user count changed
+      if (data.session.userCount !== Object.keys(sessionUsers).length) {
+        // Rejoin to get updated user list
+        joinSession(sessionId);
+      }
+    } catch (error) {
+      console.error('Error polling session:', error);
+    }
+  }, 5000);
 }
 
 // Update user list
@@ -468,12 +432,6 @@ async function leaveSession() {
   updateStatus('Leaving session...');
   
   try {
-    // Unsubscribe from channel
-    if (channel) {
-      channel.unsubscribe();
-      channel = null;
-    }
-    
     // Request to leave the session
     const response = await fetch('/api/session', {
       method: 'DELETE',
@@ -486,57 +444,29 @@ async function leaveSession() {
       })
     });
     
-    const data = await response.json();
-    
     // Update UI regardless of server response
     document.getElementById('sessionInfo').classList.add('hidden');
     updateStatus('Not in a session');
     addMessage(`SYSTEM: You left session ${sessionId}`, 'system');
     
+    // Stop polling
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
+    
     // Clear session data
     sessionId = null;
+    sessionUsers = {};
     
   } catch (error) {
     console.error('Error leaving session:', error);
     updateStatus('Error: ' + error.message);
-  }
-}
-
-// Send message in multiplayer mode
-async function sendMultiplayerMessage(message, askClaude = false, agentType = activeAgent) {
-  if (!sessionId || !clientId) {
-    addMessage('SYSTEM: Not in a session. Create or join a session first.', 'system');
-    return;
-  }
-  
-  try {
-    // Send message to server
-    const response = await fetch('/api/message', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        sessionId,
-        clientId,
-        message,
-        askClaude,
-        agentType
-      })
-    });
     
-    const data = await response.json();
-    
-    if (!data.success) {
-      throw new Error(data.message || 'Failed to send message');
-    }
-    
-    // Note: The server will broadcast the message back to all clients
-    // including this one, so we don't need to add it to the chat here
-    
-  } catch (error) {
-    console.error('Error sending message:', error);
-    addMessage(`SYSTEM: Error sending message: ${error.message}`, 'system');
+    // Clear session data anyway on error
+    sessionId = null;
+    sessionUsers = {};
+    document.getElementById('sessionInfo').classList.add('hidden');
   }
 }
 
@@ -545,6 +475,39 @@ function updateStatus(status) {
   const statusEl = document.getElementById('mpStatus');
   if (statusEl) {
     statusEl.textContent = status;
+  }
+}
+
+// Send message in multiplayer mode (simplified without real-time)
+async function sendMultiplayerMessage(message, askClaude = false, agentType = activeAgent) {
+  if (!sessionId || !clientId) {
+    addMessage('SYSTEM: Not in a session. Create or join a session first.', 'system');
+    return;
+  }
+  
+  // In this simplified version, we'll just update the local UI immediately
+  // and simulate a response from Claude if requested
+  
+  // Show the user's message
+  const msgPrefix = username ? `${username}: ` : '';
+  addMessage(msgPrefix + message, 'user');
+  
+  // If asking Claude, simulate the AI response
+  if (askClaude) {
+    const thinking = showThinking(agentType);
+    
+    // Wait before responding to simulate network delay
+    setTimeout(() => {
+      thinking.clear();
+      
+      // Call Claude API
+      askClaude(message, agentType).then(response => {
+        const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
+        addMessage(`${agentLabel}: ${response}`, agentType);
+      }).catch(error => {
+        addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
+      });
+    }, 1000);
   }
 }
 
@@ -802,11 +765,11 @@ async function testApiConnection() {
 }
 
 // Ask Claude API (single player mode)
-async function askClaude(question) {
-  const thinking = showThinking();
+async function askClaude(question, agentType = activeAgent) {
+  const thinking = showThinking(agentType);
   
   try {
-    console.log('Sending request to Claude API with agent:', activeAgent);
+    console.log('Sending request to Claude API with agent:', agentType);
     
     // Prepare request to our API endpoint
     const response = await fetch('/api/claude', {
@@ -815,7 +778,7 @@ async function askClaude(question) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        system: systemPrompts[activeAgent],
+        system: systemPrompts[agentType],
         messages: [
           { role: 'user', content: question }
         ]
@@ -829,7 +792,7 @@ async function askClaude(question) {
       thinking.clear();
       console.error('Non-JSON response:', textContent.substring(0, 200));
       addMessage(`SYSTEM: API returned non-JSON response. Please check server logs.`, 'system');
-      return;
+      throw new Error('Non-JSON response from API');
     }
     
     // Parse the response
@@ -840,18 +803,14 @@ async function askClaude(question) {
       throw new Error(data.message || `API error: ${response.status}`);
     }
     
-    console.log('Response received from Claude API for agent:', activeAgent);
+    console.log('Response received from Claude API for agent:', agentType);
     
     // Remove thinking indicator
     thinking.clear();
     
     // Extract Claude's response
     if (data?.content?.[0]?.text) {
-      const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
-      const responseText = agentLabel + ': ' + data.content[0].text;
-      
-      // Show the response
-      addMessage(responseText, activeAgent);
+      return data.content[0].text;
     } else {
       throw new Error('Unexpected response format from API');
     }
@@ -860,7 +819,6 @@ async function askClaude(question) {
     // Clear thinking indicator and show error
     thinking.clear();
     console.error('Error in askClaude:', error);
-    addMessage(`SYSTEM: API error: ${error.message || 'Unknown error'}`, 'system');
     throw error; // Re-throw for promise chaining
   }
 }
