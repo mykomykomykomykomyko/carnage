@@ -108,6 +108,10 @@ function handleCommand(command) {
         // Simple test to check if the API connection works
         testApiConnection();
         break;
+      case '/api':
+        // Check if the base API is working
+        checkBaseApi();
+        break;
       default:
         addMessage(`SYSTEM: Unknown command: ${cmd}`);
     }
@@ -126,6 +130,7 @@ AVAILABLE COMMANDS:
 /claude [message] - Ask CARNAGE specifically
 /venom [message] - Ask VENOM instead
 /test - Test API connection
+/api - Check base API endpoint
 
 You can also type any message directly to ask CARNAGE.
   `;
@@ -181,62 +186,66 @@ function showThinking() {
   };
 }
 
+// Check base API endpoint
+async function checkBaseApi() {
+  const thinking = showThinking();
+  
+  try {
+    console.log('Checking base API...');
+    const response = await fetch('/api');
+    
+    thinking.clear();
+    
+    if (response.ok) {
+      try {
+        const data = await response.json();
+        addMessage(`SYSTEM: Base API is working! Response: ${JSON.stringify(data)}`);
+      } catch (error) {
+        const text = await response.text();
+        addMessage(`SYSTEM: Base API returned non-JSON: ${text.substring(0, 100)}...`);
+      }
+    } else {
+      addMessage(`SYSTEM: Base API returned error ${response.status}`);
+    }
+  } catch (error) {
+    thinking.clear();
+    addMessage(`SYSTEM: Error checking base API: ${error.message}`);
+  }
+}
+
 // Simple test to check API connection
 async function testApiConnection() {
   const thinking = showThinking();
   
   try {
     console.log('Testing API connection...');
-    
-    // Make a simple fetch request to check if the API is accessible
-    const response = await fetch('/api/test', {
-      method: 'GET'
-    });
+    const response = await fetch('/api/test');
     
     thinking.clear();
-    console.log('Test response status:', response.status);
-    
-    // For debugging, log the response headers
-    console.log('Response headers:', [...response.headers.entries()]);
-    
-    // Create a response clone before reading the body
-    const responseClone = response.clone();
     
     if (response.ok) {
       try {
-        const data = await responseClone.json();
-        console.log('Test response data:', data);
-        addMessage(`SYSTEM: API connection test successful! The API is working properly.`);
+        const data = await response.json();
+        addMessage(`SYSTEM: API test successful! The test endpoint is working.`);
         
         // Check if API key is configured
         if (data.apiKey) {
           addMessage(`SYSTEM: ${data.apiKey}`);
         }
-      } catch (jsonError) {
-        console.error('Error parsing JSON:', jsonError);
-        
-        // If JSON parsing fails, get the text
-        const textContent = await response.text();
-        console.log('Test response text:', textContent.substring(0, 200));
-        addMessage(`SYSTEM: API returned non-JSON response: ${textContent.substring(0, 100)}...`);
+      } catch (error) {
+        const text = await response.text();
+        addMessage(`SYSTEM: API returned non-JSON: ${text.substring(0, 100)}...`);
       }
     } else {
-      // Try to get error information
+      addMessage(`SYSTEM: API test failed with status ${response.status}`);
       try {
-        const errorData = await responseClone.json();
-        console.error('Error data:', errorData);
-        addMessage(`SYSTEM: API connection test failed: ${JSON.stringify(errorData)}`);
-      } catch (jsonError) {
-        console.error('Error parsing error JSON:', jsonError);
-        
-        // If we can't parse JSON, get text content
-        const textContent = await response.text();
-        console.log('Error response text:', textContent.substring(0, 200));
-        addMessage(`SYSTEM: API test failed with status ${response.status}. Response: ${textContent.substring(0, 100)}...`);
+        const text = await response.text();
+        addMessage(`SYSTEM: Error details: ${text.substring(0, 100)}...`);
+      } catch (error) {
+        addMessage(`SYSTEM: Could not get error details: ${error.message}`);
       }
     }
   } catch (error) {
-    console.error('Test error:', error);
     thinking.clear();
     addMessage(`SYSTEM: API connection error: ${error.message}`);
   }
@@ -246,34 +255,24 @@ async function testApiConnection() {
 async function askClaude(question) {
   const thinking = showThinking();
   
-  try {
-    console.log('Preparing fake Claude API response...');
-    
-    // Set timeout to simulate network delay
-    setTimeout(() => {
-      thinking.clear();
-      
-      // Create fake responses for now
-      const fakeResponses = {
-        carnage: "### Command executed\n\nTask analyzed and completed with maximum efficiency.\n\n- Input processed\n- Solution generated\n- Output delivered\n\nFurther instructions?",
-        venom: "Analysis complete.\n\nYour request has been processed with precision. Key findings:\n\n1. Parameters assessed\n2. Strategic approach identified\n3. Tactical solution formulated\n\nHow would you like to proceed?"
-      };
-      
-      const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
-      const response = agentLabel + ': ' + fakeResponses[activeAgent];
-      
-      // Show fake response - we'll implement real API calls later
-      addMessage(response, activeAgent);
-      
-      addMessage("SYSTEM: Note: This is a simulated response. Real Claude API integration coming soon.", "system");
-    }, 1000);
-    
-  } catch (error) {
-    // Clear thinking indicator and show error
+  // Simulate network delay
+  setTimeout(() => {
     thinking.clear();
-    console.error('Error in askClaude:', error);
-    addMessage(`ERROR: ${error.message || 'Failed to connect to HQ'}`);
-  }
+    
+    // Create fake responses
+    const fakeResponses = {
+      carnage: "### Command executed\n\nTask analyzed and completed with maximum efficiency.\n\n- Input processed\n- Solution generated\n- Output delivered\n\nFurther instructions?",
+      venom: "Analysis complete.\n\nYour request has been processed with precision. Key findings:\n\n1. Parameters assessed\n2. Strategic approach identified\n3. Tactical solution formulated\n\nHow would you like to proceed?"
+    };
+    
+    const agentLabel = activeAgent === 'venom' ? 'VENOM' : 'CARNAGE';
+    const response = agentLabel + ': ' + fakeResponses[activeAgent];
+    
+    // Show fake response
+    addMessage(response, activeAgent);
+    
+    addMessage("SYSTEM: Note: This is a simulated response while we resolve API connectivity issues.", "system");
+  }, 1000);
 }
 
 // Convert markdown to HTML
