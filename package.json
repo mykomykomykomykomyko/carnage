@@ -1,20 +1,19 @@
 {
   "name": "carnage-multiplayer",
   "version": "1.0.0",
-  "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "vercel dev"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "CARNAGE terminal with multiplayer support",
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^5.1.0",
+    "express": "^4.18.2",
     "node-fetch": "^3.3.2",
-    "uuid": "^9.0.1",
-    "ws": "^8.18.2"
+    "pusher": "^5.2.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "vercel": "^33.0.0"
   }
 }
