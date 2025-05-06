@@ -1,6 +1,19 @@
-// Serverless function for Claude API integration
+import fetch from 'node-fetch';
+
 export default async function handler(req, res) {
-  // Only allow POST requests
+  // Add CORS headers
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+  // Handle OPTIONS request for CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  // Only allow POST requests for the actual API call
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -11,6 +24,7 @@ export default async function handler(req, res) {
     
     // Check if API key is configured
     if (!API_KEY) {
+      console.error('API key is not configured');
       return res.status(500).json({
         error: 'Missing API key',
         message: 'The Claude API key is not configured'
@@ -22,11 +36,18 @@ export default async function handler(req, res) {
     
     // Validate request
     if (!messages || !Array.isArray(messages)) {
+      console.error('Invalid request: messages array is missing or not an array');
       return res.status(400).json({
         error: 'Invalid request',
         message: 'Messages array is required'
       });
     }
+    
+    console.log('Making request to Claude API with:', {
+      model,
+      messageCount: messages.length,
+      hasSystem: !!system
+    });
     
     // Prepare request to Claude API
     const requestBody = {
@@ -60,12 +81,13 @@ export default async function handler(req, res) {
       return res.status(response.status).json({
         error: 'Claude API error',
         status: response.status,
-        message: errorText
+        message: `Claude API returned an error: ${response.status}`
       });
     }
     
     // Get response data
     const data = await response.json();
+    console.log('Received response from Claude API');
     
     // Return the response to the client
     return res.status(200).json(data);
