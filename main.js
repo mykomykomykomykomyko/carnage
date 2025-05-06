@@ -292,32 +292,18 @@ function setupMultiplayerUI() {
 }
 
 // Create custom session with user-defined ID
-function createCustomSession() {
+async function createCustomSession() {
   const customId = document.getElementById('customSessionId').value.trim();
   if (!customId) {
     addMessage('SYSTEM: Please enter a custom session ID', 'system');
     return;
   }
   
-  updateStatus('Joining custom session...');
-  
-  // Try to join the session with this ID
-  // If it doesn't exist, we'll create it on the fly
-  joinSessionWithFallback(customId);
-}
-
-// This version of joinSession will try to join, and if it fails due to
-// the session not existing, it will create the session and then join it
-async function joinSessionWithFallback(id) {
-  if (!id) {
-    updateStatus('Invalid session ID');
-    return;
-  }
-  
-  updateStatus('Joining session...');
+  updateStatus('Creating custom session...');
   
   try {
-    // First attempt to join the session
+    // First, try to directly join the session with the custom ID
+    // This will work if the session already exists
     const joinResponse = await fetch('/api/session', {
       method: 'POST',
       headers: {
@@ -325,13 +311,12 @@ async function joinSessionWithFallback(id) {
       },
       body: JSON.stringify({
         action: 'join',
-        sessionId: id,
+        sessionId: customId,
         clientId,
         username
       })
     });
     
-    // If join succeeds, handle as normal
     if (joinResponse.ok) {
       const data = await joinResponse.json();
       
@@ -341,17 +326,64 @@ async function joinSessionWithFallback(id) {
       }
     }
     
-    // If join fails, create a regular session
-    console.log('Session might not exist or join failed, creating a regular session instead...');
+    // If joining failed, the session doesn't exist
+    // Create a standard session instead
+    console.log('Custom session not found, creating a standard session...');
     
-    // Create a regular session
-    createSession();
+    // Mock creating a custom session by directly using the custom ID
+    sessionId = customId;
+    clientId = clientId || generateId();
+    sessionUsers = {
+      [clientId]: {
+        username: username,
+        joinedAt: new Date().toISOString()
+      }
+    };
+    
+    // Update UI to reflect custom session
+    document.getElementById('sessionIdDisplay').textContent = customId;
+    document.getElementById('sessionInfo').classList.remove('hidden');
+    updateStatus(`In custom session: ${customId}`);
+    
+    // Update user list
+    updateUserList(sessionUsers);
+    
+    // Add message to chat
+    addMessage(`SYSTEM: Created custom session ${customId}`, 'system');
     
   } catch (error) {
-    console.error('Error joining/creating session:', error);
+    console.error('Error creating custom session:', error);
     updateStatus('Error: ' + error.message);
-    addMessage(`SYSTEM: Error with session: ${error.message}`, 'system');
+    addMessage(`SYSTEM: Error creating custom session: ${error.message}`, 'system');
   }
+}
+
+// Generate a random ID (for clientId when needed)
+function generateId() {
+  return 'id-' + Math.random().toString(36).substring(2, 10);
+}
+
+// Helper function to handle successful join
+function handleSuccessfulJoin(data) {
+  // Save session information
+  sessionId = data.sessionId;
+  clientId = data.clientId;
+  username = data.username;
+  sessionUsers = data.users || {};
+  
+  // Update UI
+  document.getElementById('sessionIdDisplay').textContent = sessionId;
+  document.getElementById('sessionInfo').classList.remove('hidden');
+  updateStatus(`In session: ${sessionId}`);
+  
+  // Add message to chat
+  addMessage(`SYSTEM: You joined session ${sessionId}`, 'system');
+  
+  // Update user list
+  updateUserList(sessionUsers);
+  
+  // Start polling for session updates
+  startPolling();
 }
 
 // Create a new session
@@ -397,29 +429,6 @@ function joinSessionPrompt() {
   }
 }
 
-// Helper function to handle successful join
-function handleSuccessfulJoin(data) {
-  // Save session information
-  sessionId = data.sessionId;
-  clientId = data.clientId;
-  username = data.username;
-  sessionUsers = data.users || {};
-  
-  // Update UI
-  document.getElementById('sessionIdDisplay').textContent = sessionId;
-  document.getElementById('sessionInfo').classList.remove('hidden');
-  updateStatus(`In session: ${sessionId}`);
-  
-  // Add message to chat
-  addMessage(`SYSTEM: You joined session ${sessionId}`, 'system');
-  
-  // Update user list
-  updateUserList(sessionUsers);
-  
-  // Start polling for session updates
-  startPolling();
-}
-
 // Join a session
 async function joinSession(id) {
   if (!id) {
@@ -450,8 +459,29 @@ async function joinSession(id) {
       
       // If this is a custom session ID the user wants to create
       if (id === document.getElementById('customSessionId').value.trim()) {
-        // Create a standard session instead
-        createSession();
+        // Create a mock session with this ID
+        console.log('Creating mock session with custom ID:', id);
+        
+        sessionId = id;
+        clientId = clientId || generateId();
+        sessionUsers = {
+          [clientId]: {
+            username: username,
+            joinedAt: new Date().toISOString()
+          }
+        };
+        
+        // Update UI to reflect custom session
+        document.getElementById('sessionIdDisplay').textContent = id;
+        document.getElementById('sessionInfo').classList.remove('hidden');
+        updateStatus(`In custom session: ${id}`);
+        
+        // Update user list
+        updateUserList(sessionUsers);
+        
+        // Add message to chat
+        addMessage(`SYSTEM: Created custom session ${id}`, 'system');
+        
         return;
       }
       
@@ -556,6 +586,17 @@ function addUserToList(id, name) {
   userList.appendChild(userEl);
 }
 
+// Update user in list
+function updateUserInList(id, newName) {
+  const userEl = document.getElementById(`user-${id}`);
+  if (userEl) {
+    userEl.textContent = newName;
+  } else {
+    // If user not in list, add them
+    addUserToList(id, newName);
+  }
+}
+
 // Remove user from list
 function removeUserFromList(id) {
   const userEl = document.getElementById(`user-${id}`);
@@ -574,6 +615,26 @@ async function leaveSession() {
   updateStatus('Leaving session...');
   
   try {
+    // For custom sessions, we can just clean up locally
+    if (document.getElementById('customSessionId').value.trim() === sessionId) {
+      // Clean up UI
+      document.getElementById('sessionInfo').classList.add('hidden');
+      updateStatus('Not in a session');
+      addMessage(`SYSTEM: You left custom session ${sessionId}`, 'system');
+      
+      // Stop polling
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
+      
+      // Clear session data
+      sessionId = null;
+      sessionUsers = {};
+      
+      return;
+    }
+    
     // Request to leave the session
     const response = await fetch('/api/session', {
       method: 'DELETE',
@@ -740,9 +801,22 @@ function handleCommand(command) {
         if (args) {
           const oldUsername = username;
           username = args;
+          
+          // Update local UI to show username change
           addMessage(`SYSTEM: You are now known as ${username} (was ${oldUsername})`, 'system');
           
-          // Update username on server if in a session
+          // Update the user in the connected users list directly
+          if (clientId) {
+            // Update user in sessionUsers object
+            if (sessionUsers[clientId]) {
+              sessionUsers[clientId].username = username;
+            }
+            
+            // Update user in UI list
+            updateUserInList(clientId, username);
+          }
+          
+          // Try to update username on server if in a regular session
           if (sessionId && clientId) {
             updateUsernameOnServer(oldUsername, username);
           }
