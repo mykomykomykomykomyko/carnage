@@ -535,12 +535,15 @@ function handleCommand(command) {
             const prevAgent = activeAgent;
             activeAgent = 'venom';
             document.body.setAttribute('data-agent', 'venom');
-            askClaude(args).then(() => {
+            
+            // Call the API and display the response
+            askClaudeAndDisplayResponse(args, 'venom').then(() => {
               // Switch back after response is received
               activeAgent = prevAgent;
               document.body.setAttribute('data-agent', prevAgent);
             }).catch(error => {
               console.error("Error in venom command:", error);
+              addMessage(`SYSTEM: Error getting VENOM response: ${error.message}`, 'system');
               // Make sure we switch back even on error
               activeAgent = prevAgent;
               document.body.setAttribute('data-agent', prevAgent);
@@ -561,8 +564,17 @@ function handleCommand(command) {
             const prevAgent = activeAgent;
             activeAgent = 'carnage';
             document.body.setAttribute('data-agent', 'carnage');
-            askClaude(args).then(() => {
+            
+            // Call the API and display the response
+            askClaudeAndDisplayResponse(args, 'carnage').then(() => {
               // Reset to previous agent if needed
+              if (prevAgent !== 'carnage') {
+                activeAgent = prevAgent;
+                document.body.setAttribute('data-agent', prevAgent);
+              }
+            }).catch(error => {
+              console.error("Error in carnage command:", error);
+              addMessage(`SYSTEM: Error getting CARNAGE response: ${error.message}`, 'system');
               if (prevAgent !== 'carnage') {
                 activeAgent = prevAgent;
                 document.body.setAttribute('data-agent', prevAgent);
@@ -615,9 +627,23 @@ function handleCommand(command) {
       // In multiplayer, send to session
       sendMultiplayerMessage(command);
     } else {
-      // In single player, ask Claude directly
-      askClaude(command);
+      // In single player, ask Claude directly and display the response
+      askClaudeAndDisplayResponse(command);
     }
+  }
+}
+
+// Helper function to call Claude API and display the response 
+async function askClaudeAndDisplayResponse(question, agentType = activeAgent) {
+  try {
+    const response = await askClaude(question, agentType);
+    const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
+    addMessage(`${agentLabel}: ${response}`, agentType);
+    return response;
+  } catch (error) {
+    console.error('Error in askClaudeAndDisplayResponse:', error);
+    addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
+    throw error;
   }
 }
 
@@ -804,6 +830,7 @@ async function askClaude(question, agentType = activeAgent) {
     }
     
     console.log('Response received from Claude API for agent:', agentType);
+    console.log('Response content:', data?.content?.[0]?.text || 'No content');
     
     // Remove thinking indicator
     thinking.clear();
