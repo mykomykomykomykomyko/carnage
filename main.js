@@ -12,6 +12,12 @@ let lastUserMessage = ''; // Track last message to prevent duplicates
 let isConnecting = false; // Flag to prevent multiple concurrent connection attempts
 let customSessionIdInput = null; // Cache DOM reference
 
+// Pusher integration for realtime functionality
+let pusher = null;
+let channel = null;
+const PUSHER_KEY = '49fa5db19939b47d29b1'; // Replace with your actual Pusher key
+const PUSHER_CLUSTER = 'us3'; // Replace with your actual Pusher cluster
+
 // Startup animation text
 const startupText = 'LET THERE BE CARNAGE...';
 
@@ -75,7 +81,154 @@ function typeStartup() {
       
       // Set default username based on timestamp to ensure uniqueness
       setDefaultUsername();
+      
+      // Initialize Pusher for realtime functionality
+      initPusher();
     }, 1500);
+  }
+}
+
+// Initialize Pusher for realtime communication
+function initPusher() {
+  try {
+    // Load Pusher script dynamically if not already available
+    if (typeof Pusher === 'undefined') {
+      const script = document.createElement('script');
+      script.src = 'https://js.pusher.com/8.0.1/pusher.min.js';
+      script.async = true;
+      script.onload = () => {
+        setupPusher();
+      };
+      document.head.appendChild(script);
+    } else {
+      setupPusher();
+    }
+  } catch (error) {
+    console.error('Error initializing Pusher:', error);
+    addMessage('SYSTEM: Could not initialize real-time communication. Some multiplayer features may be limited.', 'system');
+  }
+}
+
+// Set up Pusher connection
+function setupPusher() {
+  try {
+    console.log('Setting up Pusher...');
+    pusher = new Pusher(PUSHER_KEY, {
+      cluster: PUSHER_CLUSTER,
+      forceTLS: true
+    });
+    
+    // Set up global error handlers
+    pusher.connection.bind('error', (err) => {
+      console.error('Pusher connection error:', err);
+    });
+    
+    pusher.connection.bind('connected', () => {
+      console.log('Pusher connected successfully');
+    });
+  } catch (error) {
+    console.error('Error setting up Pusher:', error);
+  }
+}
+
+// Subscribe to a Pusher channel for a session
+function subscribeToChannel(sessionId) {
+  if (!pusher) return;
+  
+  try {
+    // Unsubscribe from any previous channel
+    if (channel) {
+      channel.unsubscribe();
+    }
+    
+    // For custom sessions, use a private channel with the session ID
+    const channelName = `presence-session-${sessionId}`;
+    console.log('Subscribing to channel:', channelName);
+    
+    // Subscribe to the channel
+    channel = pusher.subscribe(channelName);
+    
+    // Set up event handlers for the channel
+    channel.bind('pusher:subscription_succeeded', (data) => {
+      console.log('Successfully subscribed to channel:', data);
+    });
+    
+    channel.bind('pusher:subscription_error', (error) => {
+      console.error('Error subscribing to channel:', error);
+    });
+    
+    // Bind to custom events
+    channel.bind('user-message', (data) => {
+      if (data.clientId !== clientId) {
+        // Show message from another user
+        addMessage(`${data.username}: ${data.message}`, 'user');
+      }
+    });
+    
+    channel.bind('thinking', (data) => {
+      if (data.clientId !== clientId) {
+        // Show thinking indicator from another user's Claude request
+        const thinking = showThinking(data.agentType);
+        thinking.element.setAttribute('data-request-id', data.requestId);
+      }
+    });
+    
+    channel.bind('claude-response', (data) => {
+      // Clear thinking indicators for this request
+      const thinkingElements = document.querySelectorAll(`.thinking[data-request-id="${data.requestId}"]`);
+      thinkingElements.forEach(el => {
+        if (el._interval) clearInterval(el._interval);
+        el.remove();
+      });
+      
+      if (data.clientId !== clientId) {
+        // Show Claude's response from another user's request
+        const agentLabel = data.agentType === 'venom' ? 'VENOM' : 'CARNAGE';
+        addMessage(`${agentLabel}: ${data.response}`, data.agentType);
+      }
+    });
+    
+    channel.bind('username-changed', (data) => {
+      // Update user in the list
+      if (sessionUsers[data.clientId]) {
+        sessionUsers[data.clientId].username = data.newUsername;
+        updateUserInList(data.clientId, data.newUsername);
+      }
+      
+      // Show system message about the change
+      addMessage(`SYSTEM: ${data.oldUsername} is now known as ${data.newUsername}`, 'system');
+    });
+    
+    channel.bind('user-joined', (data) => {
+      // Add user to session users
+      sessionUsers[data.clientId] = {
+        username: data.username,
+        joinedAt: data.timestamp
+      };
+      
+      // Update user list
+      updateUserInList(data.clientId, data.username);
+      
+      // Show system message
+      addMessage(`SYSTEM: ${data.username} joined the session`, 'system');
+    });
+    
+    channel.bind('user-left', (data) => {
+      // Remove user from session users
+      if (sessionUsers[data.clientId]) {
+        delete sessionUsers[data.clientId];
+      }
+      
+      // Remove from user list
+      removeUserFromList(data.clientId);
+      
+      // Show system message
+      addMessage(`SYSTEM: ${data.username} left the session`, 'system');
+    });
+    
+  } catch (error) {
+    console.error('Error subscribing to channel:', error);
+    addMessage('SYSTEM: Error connecting to real-time communication service.', 'system');
   }
 }
 
@@ -168,6 +321,14 @@ function cleanupBeforeUnload() {
   // Save session data if in a session
   if (sessionId) {
     saveSessionToLocalStorage();
+  }
+  
+  // Clean up Pusher connection
+  if (channel) {
+    channel.unsubscribe();
+  }
+  if (pusher) {
+    pusher.disconnect();
   }
 }
 
@@ -434,8 +595,32 @@ async function createCustomSession() {
       }
     }
     
-    // If joining failed, create a custom session locally
-    console.log('Server-side session not found, creating client-side custom session...');
+    // If joining failed, create a server-side session first
+    console.log('Custom session not found, creating one...');
+    
+    // Try to create a session on the server
+    const createResponse = await fetchWithTimeout('/api/session', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'create'
+      })
+    }, 5000);
+    
+    if (createResponse.ok) {
+      const data = await createResponse.json();
+      
+      if (data.success) {
+        // Join the created session
+        joinSession(data.sessionId || customId);
+        return;
+      }
+    }
+    
+    // If server-side creation also failed, create a local session
+    console.log('Server-side session creation failed, using peer-to-peer approach...');
     
     // Set up client-side session data
     sessionId = customId;
@@ -460,6 +645,9 @@ async function createCustomSession() {
     
     // Add message to chat
     addMessage(`SYSTEM: Created custom session ${customId}`, 'system');
+    
+    // Subscribe to Pusher channel for this session
+    subscribeToChannel(customId);
     
   } catch (error) {
     console.error('Error creating custom session:', error);
@@ -550,8 +738,8 @@ function handleSuccessfulJoin(data) {
   // Update user list
   updateUserList(sessionUsers);
   
-  // Start polling for session updates
-  startPolling();
+  // Subscribe to real-time updates for this session
+  subscribeToChannel(sessionId);
 }
 
 // Create a new session
@@ -637,6 +825,9 @@ function createLocalSession() {
   
   // Add message to chat
   addMessage(`SYSTEM: Created local session ${localSessionId}`, 'system');
+  
+  // Subscribe to real-time updates
+  subscribeToChannel(localSessionId);
 }
 
 // Join a session prompt
@@ -673,12 +864,6 @@ async function joinSession(id) {
   toggleConnectionButtons(false);
   
   try {
-    // For custom sessions that we know are client-side only
-    if (id.startsWith('local-') || id === customSessionIdInput?.value?.trim()) {
-      createLocalSessionWithId(id);
-      return;
-    }
-    
     // Request to join the session
     const response = await fetchWithTimeout('/api/session', {
       method: 'POST',
@@ -695,7 +880,32 @@ async function joinSession(id) {
     
     // Check if we got a 404 (session not found)
     if (response.status === 404) {
-      console.log('Session not found, creating local session with this ID');
+      console.log('Session not found, creating one with this ID...');
+      
+      // Try to create a session on the server with this ID
+      const createResponse = await fetchWithTimeout('/api/session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action: 'create'
+        })
+      }, 5000);
+      
+      if (createResponse.ok) {
+        const data = await createResponse.json();
+        
+        if (data.success) {
+          // Use the created session ID
+          const createdId = data.sessionId;
+          // Now join it
+          joinSession(createdId);
+          return;
+        }
+      }
+      
+      // If server-side creation failed, create a local session with this ID
       createLocalSessionWithId(id);
       return;
     }
@@ -756,57 +966,12 @@ function createLocalSessionWithId(id) {
   // Add message to chat
   addMessage(`SYSTEM: Created local session ${id}`, 'system');
   
+  // Subscribe to real-time updates
+  subscribeToChannel(id);
+  
   // Reset connecting state
   isConnecting = false;
   toggleConnectionButtons(true);
-}
-
-// Start polling for session updates
-function startPolling() {
-  // Stop existing polling if any
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-  }
-  
-  // Don't poll for local sessions
-  if (sessionId && (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim())) {
-    console.log('Local session detected, skipping polling');
-    return;
-  }
-  
-  // Poll every 5 seconds
-  pollingInterval = setInterval(async () => {
-    if (!sessionId) {
-      clearInterval(pollingInterval);
-      return;
-    }
-    
-    try {
-      // Get session info
-      const response = await fetchWithTimeout(`/api/session?sessionId=${sessionId}`, {}, 3000);
-      
-      if (!response.ok) {
-        console.error(`Error polling session: ${response.status}`);
-        return;
-      }
-      
-      const data = await response.json();
-      
-      if (!data.success) {
-        console.error('Error polling session:', data.message);
-        return;
-      }
-      
-      // Update UI if user count changed
-      if (data.session.userCount !== Object.keys(sessionUsers).length) {
-        // Rejoin to get updated user list
-        joinSession(sessionId);
-      }
-    } catch (error) {
-      console.error('Error polling session:', error);
-      // Don't stop polling on temporary errors
-    }
-  }, 5000);
 }
 
 // Update user list
@@ -871,25 +1036,53 @@ async function leaveSession() {
   updateStatus('Leaving session...');
   
   try {
-    // For local/custom sessions, just clean up locally
-    if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
-      cleanupLocalSession();
-      return;
+    // Notify other users that you're leaving (via Pusher)
+    if (channel) {
+      // Either use a server endpoint or trigger a client-side event
+      try {
+        // Try server endpoint first
+        await fetchWithTimeout('/api/session/leave', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            sessionId,
+            clientId,
+            username
+          })
+        }, 3000);
+      } catch (error) {
+        console.log('Could not notify server about leaving, using client events');
+        
+        // Fall back to client-side notification
+        if (channel.trigger) {
+          channel.trigger('client-user-left', {
+            clientId,
+            username,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
     }
     
-    // Request to leave the session
-    const response = await fetchWithTimeout('/api/session', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        sessionId,
-        clientId
-      })
-    }, 5000);
+    // Now try the official leave endpoint
+    try {
+      await fetchWithTimeout('/api/session', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sessionId,
+          clientId
+        })
+      }, 5000);
+    } catch (error) {
+      console.error('Error with server leave endpoint:', error);
+    }
     
-    // Clean up locally regardless of server response
+    // Always clean up locally regardless of server response
     cleanupLocalSession();
     
   } catch (error) {
@@ -903,16 +1096,16 @@ async function leaveSession() {
 
 // Clean up a local session
 function cleanupLocalSession() {
+  // Unsubscribe from real-time updates
+  if (channel) {
+    channel.unsubscribe();
+    channel = null;
+  }
+  
   // Update UI
   document.getElementById('sessionInfo').classList.add('hidden');
   updateStatus('Not in a session');
   addMessage(`SYSTEM: You left session ${sessionId}`, 'system');
-  
-  // Stop polling
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
-  }
   
   // Clear session data
   sessionId = null;
@@ -930,7 +1123,7 @@ function updateStatus(status) {
   }
 }
 
-// Send message in multiplayer mode (simplified without real-time)
+// Send message in multiplayer mode
 async function sendMultiplayerMessage(message, askClaude = false, agentType = activeAgent) {
   if (!sessionId || !clientId) {
     addMessage('SYSTEM: Not in a session. Create or join a session first.', 'system');
@@ -941,31 +1134,13 @@ async function sendMultiplayerMessage(message, askClaude = false, agentType = ac
   const msgPrefix = username ? `${username}: ` : '';
   addMessage(msgPrefix + message, 'user');
   
-  // For local sessions, we only update the local UI
-  if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
-    // If asking Claude, get the AI response
-    if (askClaude) {
-      const thinking = showThinking(agentType);
-      
-      // Wait before responding to simulate network delay
-      setTimeout(() => {
-        thinking.clear();
-        
-        // Call Claude API
-        askClaude(message, agentType).then(response => {
-          const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
-          addMessage(`${agentLabel}: ${response}`, agentType);
-        }).catch(error => {
-          addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
-        });
-      }, 1000);
-    }
-    return;
-  }
+  // Generate a unique request ID for this message/request
+  const requestId = generateId();
   
-  // For server sessions, try to send the message to the server
+  // Try to send message to server for broadcasting
   try {
-    await fetchWithTimeout('/api/session/message', {
+    // Try server API first
+    const response = await fetchWithTimeout('/api/session/message', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -976,30 +1151,119 @@ async function sendMultiplayerMessage(message, askClaude = false, agentType = ac
         username,
         message,
         askClaude,
-        agentType
+        agentType,
+        requestId
       })
-    }, 5000);
+    }, 3000).catch(error => {
+      console.log('Server message API not available:', error);
+      return { ok: false };
+    });
     
-    // If asking Claude, simulate the AI response
-    if (askClaude) {
-      const thinking = showThinking(agentType);
+    // If server API failed, try to use Pusher client events
+    if (!response.ok && channel) {
+      console.log('Using Pusher client events for message broadcasting');
       
-      // Wait before responding to simulate network delay
-      setTimeout(() => {
-        thinking.clear();
-        
-        // Call Claude API
-        askClaude(message, agentType).then(response => {
-          const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
-          addMessage(`${agentLabel}: ${response}`, agentType);
-        }).catch(error => {
-          addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
+      // Broadcast message to all clients
+      if (channel.trigger) {
+        channel.trigger('client-user-message', {
+          clientId,
+          username,
+          message,
+          timestamp: new Date().toISOString()
         });
-      }, 1000);
+      }
     }
   } catch (error) {
     console.error('Error sending message to server:', error);
-    addMessage(`SYSTEM: Error sending message to server: ${error.message}`, 'system');
+    // Continue with Claude processing even if broadcasting failed
+  }
+  
+  // If asking Claude, get the AI response
+  if (askClaude) {
+    // Show thinking indicator
+    const thinking = showThinking(agentType);
+    thinking.element.setAttribute('data-request-id', requestId);
+    
+    // Try to broadcast thinking state
+    try {
+      if (channel && channel.trigger) {
+        channel.trigger('client-thinking', {
+          clientId,
+          agentType,
+          requestId,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error('Error broadcasting thinking state:', error);
+    }
+    
+    // Call Claude API
+    try {
+      const response = await askClaude(message, agentType);
+      
+      // Clear thinking indicator
+      thinking.clear();
+      
+      // Display response locally
+      const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
+      addMessage(`${agentLabel}: ${response}`, agentType);
+      
+      // Try to broadcast Claude's response
+      try {
+        if (channel && channel.trigger) {
+          channel.trigger('client-claude-response', {
+            clientId,
+            agentType,
+            requestId,
+            response,
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (error) {
+        console.error('Error broadcasting Claude response:', error);
+      }
+      
+      // Also try server API for broadcasting
+      try {
+        await fetchWithTimeout('/api/session/claude-response', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            sessionId,
+            clientId,
+            agentType,
+            requestId,
+            response
+          })
+        }, 3000);
+      } catch (error) {
+        console.log('Server Claude response API not available:', error);
+      }
+      
+    } catch (error) {
+      // Clear thinking indicator
+      thinking.clear();
+      
+      // Show error locally
+      addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
+      
+      // Try to broadcast error
+      try {
+        if (channel && channel.trigger) {
+          channel.trigger('client-claude-error', {
+            clientId,
+            requestId,
+            error: error.message,
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (broadcastError) {
+        console.error('Error broadcasting Claude error:', broadcastError);
+      }
+    }
   }
 }
 
@@ -1145,6 +1409,10 @@ function handleCommand(command) {
         // Clear the chat window
         clearChatWindow();
         break;
+      case '/users':
+        // Show list of connected users
+        showConnectedUsers();
+        break;
       default:
         addMessage(`SYSTEM: Unknown command: ${cmd}`, 'system');
     }
@@ -1158,6 +1426,24 @@ function handleCommand(command) {
       askClaudeAndDisplayResponse(command);
     }
   }
+}
+
+// Show list of connected users
+function showConnectedUsers() {
+  if (!sessionId) {
+    addMessage('SYSTEM: Not in a session', 'system');
+    return;
+  }
+  
+  const userCount = Object.keys(sessionUsers).length;
+  let message = `SYSTEM: Connected Users (${userCount}):\n`;
+  
+  Object.entries(sessionUsers).forEach(([id, user]) => {
+    const isSelf = id === clientId ? ' (you)' : '';
+    message += `- ${user.username}${isSelf}\n`;
+  });
+  
+  addMessage(message, 'system');
 }
 
 // Clear the chat window
@@ -1179,21 +1465,7 @@ async function updateUsernameOnServer(oldUsername, newUsername) {
 
     console.log(`Updating username from ${oldUsername} to ${newUsername}`);
     
-    // For local/custom sessions, update locally
-    if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
-      // Update locally first
-      if (sessionUsers[clientId]) {
-        sessionUsers[clientId].username = newUsername;
-      }
-      
-      // Simulate a broadcast message to all users in the session
-      const message = `SYSTEM: ${oldUsername} is now known as ${newUsername}`;
-      addMessage(message, 'system');
-      
-      return;
-    }
-    
-    // For server sessions, try the API if it exists
+    // Try server API first
     try {
       const response = await fetchWithTimeout('/api/session/username', {
         method: 'POST',
@@ -1206,52 +1478,53 @@ async function updateUsernameOnServer(oldUsername, newUsername) {
           oldUsername,
           newUsername
         })
-      }, 5000);
+      }, 3000);
       
-      if (!response.ok) {
-        console.log('Username update API not available, using message-based approach');
-        
-        // Fallback: Send a system message that will be seen by all users
-        sendSystemMessageToAll(`${oldUsername} is now known as ${newUsername}`);
+      if (response.ok) {
+        console.log('Username updated via server API');
+        return;
       }
     } catch (error) {
-      console.error('Error updating username via API:', error);
+      console.log('Username update API not available:', error);
+    }
+    
+    // If server API failed, use Pusher client events or custom triggers
+    console.log('Using Pusher for username update notification');
+    
+    if (channel) {
+      // Try client events if available
+      if (channel.trigger) {
+        channel.trigger('client-username-changed', {
+          clientId,
+          oldUsername,
+          newUsername,
+          timestamp: new Date().toISOString()
+        });
+      }
       
-      // Fallback: Send a system message that will be seen by all users
-      sendSystemMessageToAll(`${oldUsername} is now known as ${newUsername}`);
+      // Also use our server-side event triggering
+      try {
+        await fetchWithTimeout('/api/pusher/trigger', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            channel: `presence-session-${sessionId}`,
+            event: 'username-changed',
+            data: {
+              clientId,
+              oldUsername,
+              newUsername
+            }
+          })
+        }, 3000);
+      } catch (error) {
+        console.log('Server trigger API not available:', error);
+      }
     }
   } catch (error) {
     console.error('Error in updateUsernameOnServer:', error);
-  }
-}
-
-// Send a system message that all users in the session will see
-async function sendSystemMessageToAll(message) {
-  try {
-    if (!sessionId || !clientId) {
-      return;
-    }
-    
-    // Local sessions don't need this
-    if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
-      return;
-    }
-    
-    // Try to use the message API to send the system message
-    await fetchWithTimeout('/api/session/message', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        sessionId,
-        clientId,
-        message: message,
-        type: 'system'
-      })
-    }, 5000);
-  } catch (error) {
-    console.error('Error sending system message:', error);
   }
 }
 
@@ -1286,6 +1559,7 @@ MULTIPLAYER COMMANDS:
 /join [id] - Join a session
 /leave - Leave the current session
 /name [username] - Set or view your username
+/users - Show list of connected users
 
 DIAGNOSTIC COMMANDS:
 /test - Test API connection
@@ -1325,7 +1599,7 @@ function addMessage(text, from = 'system') {
 function showThinking(agent = activeAgent) {
   const agentLabel = agent === 'venom' ? 'VENOM' : 'CARNAGE';
   const msg = addMessage(`${agentLabel} IS THINKING`, agent);
-  if (!msg) return { clear: () => {} }; // Return dummy object if message creation failed
+  if (!msg) return { clear: () => {}, element: null }; // Return dummy object if message creation failed
   
   msg.classList.add('thinking');
   
