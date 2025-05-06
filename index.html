@@ -1,55 +1,98 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CARNAGE Terminal</title>
-  <link rel="stylesheet" href="style.css" />
-  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet" />
-  <!-- Pusher JS SDK -->
-  <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CARNAGE Minimal</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: black;
+      color: #ff003c;
+      font-family: monospace;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      text-align: center;
+    }
+    #terminal {
+      border: 2px solid #ff003c;
+      padding: 20px;
+      width: 80%;
+      max-width: 800px;
+    }
+    #output {
+      margin: 20px 0;
+      text-align: left;
+      min-height: 300px;
+    }
+    input {
+      width: 100%;
+      background: black;
+      color: #ff003c;
+      border: 1px solid #ff003c;
+      padding: 5px;
+      font-family: monospace;
+    }
+    .message {
+      margin-bottom: 10px;
+    }
+  </style>
 </head>
 <body>
-    <div id="nav">
-        <div class="nav-actions">
-          <button onclick="location.reload()">REBOOT</button>
-          <button onclick="alert('LOGGING...')">LOG</button>
-          <button onclick="alert('SYSTEM STABLE')">STATUS</button>
-        </div>
-      </div>  
-    <div id="sidebar">
-        <button data-agent="carnage" onclick="switchAgent('carnage')">CARNAGE</button>
-        <button data-agent="venom" onclick="switchAgent('venom')">VENOM</button>
-    </div>          
- <div class="crt">
-  <div id="startup" class="screen">
-    <pre id="asciiArt">
-      _____         _____        _____  _____   ______         _____         _____         ______   
-  ___|\    \    ___|\    \   ___|\    \|\    \ |\     \    ___|\    \    ___|\    \    ___|\     \  
- /    /\    \  /    /\    \ |    |\    \\\    \| \     \  /    /\    \  /    /\    \  |     \     \ 
-|    |  |    ||    |  |    ||    | |    |\|    \  \     ||    |  |    ||    |  |____| |     ,_____/|
-|    |  |____||    |__|    ||    |/____/  |     \  |    ||    |__|    ||    |    ____ |     \--'\_|/
-|    |   ____ |    .--.    ||    |\    \  |      \ |    ||    .--.    ||    |   |    ||     /___/|  
-|    |  |    ||    |  |    ||    | |    | |    |\ \|    ||    |  |    ||    |   |_,  ||     \____|\ 
-|\ ___\/    /||____|  |____||____| |____| |____||\_____/||____|  |____||\ ___\___/  /||____ '     /|
-| |   /____/ ||    |  |    ||    | |    | |    |/ \|   |||    |  |    || |   /____ / ||    /_____/ |
- \|___|    | /|____|  |____||____| |____| |____|   |___|/|____|  |____| \|___|    | / |____|     | /
-   \( |____|/   \(      )/    \(     )/     \(       )/    \(      )/     \( |____|/    \( |_____|/ 
-    '   )/       '      '      '     '       '       '      '      '       '   )/        '    )/    
-        '                                                                      '              '     
-    </pre>
+  <div id="terminal">
+    <h1>CARNAGE</h1>
     <div id="startupText"></div>
+    <div id="output"></div>
+    <input id="input" type="text" placeholder="Type a command..." autofocus>
   </div>
-  <div id="chat" class="screen hidden">
-    <div id="chatWindow"></div>
-    <div id="inputContainer">
-      <div id="inputBox">
-        <span>&gt;</span><input id="chatInput" type="text" placeholder="type your command..." />
-      </div>
-      <div id="enterHint">ENTER</div>
-    </div>
-  </div>
-</div>
-<script src="main.js"></script>
+
+  <script>
+    // Basic variables
+    let charIndex = 0;
+    const startupText = "HERE COMES CARNAGE...";
+    
+    // Start typing effect when page loads
+    window.onload = function() {
+      console.log("Page loaded, starting animation");
+      document.getElementById('startupText').textContent = '';
+      typeStartup();
+      
+      // Set up input handler
+      document.getElementById('input').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+          const inputText = this.value;
+          this.value = '';
+          addMessage('> ' + inputText);
+          
+          // Simulate a response
+          setTimeout(() => {
+            addMessage('CARNAGE: I received your command: ' + inputText);
+          }, 500);
+        }
+      });
+    };
+    
+    // Type startup text one character at a time
+    function typeStartup() {
+      const el = document.getElementById('startupText');
+      if (charIndex < startupText.length) {
+        el.textContent += startupText[charIndex];
+        charIndex++;
+        setTimeout(typeStartup, 100);
+      }
+    }
+    
+    // Add a message to the output
+    function addMessage(text) {
+      const output = document.getElementById('output');
+      const msg = document.createElement('div');
+      msg.className = 'message';
+      msg.textContent = text;
+      output.appendChild(msg);
+    }
+  </script>
 </body>
 </html>
