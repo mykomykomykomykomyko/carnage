@@ -104,6 +104,10 @@ function handleCommand(command) {
           addMessage("SYSTEM: Please provide a message for CARNAGE");
         }
         break;
+      case '/test':
+        // Simple test to check if the API connection works
+        testApiConnection();
+        break;
       default:
         addMessage(`SYSTEM: Unknown command: ${cmd}`);
     }
@@ -121,6 +125,7 @@ AVAILABLE COMMANDS:
 /help - Show this help message
 /claude [message] - Ask CARNAGE specifically
 /venom [message] - Ask VENOM instead
+/test - Test API connection
 
 You can also type any message directly to ask CARNAGE.
   `;
@@ -176,11 +181,55 @@ function showThinking() {
   };
 }
 
+// Simple test to check API connection
+async function testApiConnection() {
+  const thinking = showThinking();
+  
+  try {
+    // Make a simple fetch request to check if the API is accessible
+    const response = await fetch('/api/claude', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messages: [
+          { role: 'user', content: 'This is a test' }
+        ]
+      })
+    });
+    
+    thinking.clear();
+    
+    if (response.ok) {
+      addMessage('SYSTEM: API connection test successful! The API endpoint is accessible.');
+    } else {
+      // Try to get error information
+      let errorInfo = 'Unknown error';
+      try {
+        const errorData = await response.json();
+        errorInfo = errorData.message || `Status: ${response.status}`;
+      } catch (parseError) {
+        // If we can't parse JSON, get text content
+        const textContent = await response.text();
+        errorInfo = `Status: ${response.status}, Content: ${textContent.substring(0, 100)}...`;
+      }
+      
+      addMessage(`SYSTEM: API connection test failed: ${errorInfo}`);
+    }
+  } catch (error) {
+    thinking.clear();
+    addMessage(`SYSTEM: API connection error: ${error.message}`);
+  }
+}
+
 // Ask Claude API
 async function askClaude(question) {
   const thinking = showThinking();
   
   try {
+    console.log('Sending request to Claude API...');
+    
     // Prepare request to our API endpoint
     const response = await fetch('/api/claude', {
       method: 'POST',
@@ -195,14 +244,25 @@ async function askClaude(question) {
       })
     });
     
-    // Check for error response
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || `API error: ${response.status}`);
+    // For non-JSON responses (like HTML error pages)
+    if (!response.headers.get('content-type')?.includes('application/json')) {
+      const textContent = await response.text();
+      thinking.clear();
+      
+      console.error('Non-JSON response:', textContent.substring(0, 200));
+      addMessage(`ERROR: API returned non-JSON response. Check your API endpoint.`);
+      return;
     }
     
-    // Parse the response
+    // Parse the response (should be JSON)
     const data = await response.json();
+    
+    // Check for error response
+    if (!response.ok) {
+      throw new Error(data.message || `API error: ${response.status}`);
+    }
+    
+    console.log('Response received:', data);
     
     // Remove thinking indicator
     thinking.clear();
@@ -221,6 +281,7 @@ async function askClaude(question) {
   } catch (error) {
     // Clear thinking indicator and show error
     thinking.clear();
+    console.error('Error in askClaude:', error);
     addMessage(`ERROR: ${error.message || 'Failed to connect to HQ'}`);
   }
 }
