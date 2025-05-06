@@ -1,13 +1,13 @@
 import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-  // Add CORS headers
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
-  // Handle OPTIONS request for CORS preflight
+  // Handle OPTIONS request
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
@@ -46,13 +46,14 @@ export default async function handler(req, res) {
     console.log('Making request to Claude API with:', {
       model,
       messageCount: messages.length,
+      firstMessagePreview: messages[0]?.content?.substring(0, 50) + '...',
       hasSystem: !!system
     });
     
     // Prepare request to Claude API
     const requestBody = {
       model,
-      max_tokens: 500,
+      max_tokens: 1000,
       messages,
       temperature: 0.7
     };
