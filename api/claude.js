@@ -1,5 +1,4 @@
-import fetch from 'node-fetch';
-
+// Serverless function for Claude API integration
 export default async function handler(req, res) {
   // Only allow POST requests
   if (req.method !== 'POST') {
@@ -7,99 +6,75 @@ export default async function handler(req, res) {
   }
   
   try {
-    // Get API key from environment variables
+    // Get the API key from environment variables
     const API_KEY = process.env.CLAUDE_API_KEY;
     
     // Check if API key is configured
     if (!API_KEY) {
-      return res.status(500).json({ 
-        error: 'server_configuration_error', 
-        message: 'API key not configured on server'
+      return res.status(500).json({
+        error: 'Missing API key',
+        message: 'The Claude API key is not configured'
       });
     }
     
-    const { system, messages, max_tokens, temperature, model } = req.body;
+    // Extract parameters from request body
+    const { system, messages, model = 'claude-3-opus-20240229' } = req.body;
     
-    // Validate request body
+    // Validate request
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({
-        error: 'invalid_request',
+        error: 'Invalid request',
         message: 'Messages array is required'
       });
     }
     
-    // Set default model if not provided
-    const claudeModel = model || 'claude-3-opus-20240229';
-    
-    // Set default max tokens if not provided or too high
-    const tokens = max_tokens && max_tokens <= 4000 ? max_tokens : 500;
-    
-    // Prepare request to Anthropic API
-    const anthropicRequest = {
-      model: claudeModel,
-      max_tokens: tokens,
-      temperature: temperature || 0.7,
-      messages: messages
+    // Prepare request to Claude API
+    const requestBody = {
+      model,
+      max_tokens: 500,
+      messages,
+      temperature: 0.7
     };
     
     // Add system prompt if provided
     if (system) {
-      // Add ASCII art prevention if not already included
-      let systemPrompt = system;
-      if (!system.includes('Never respond with ASCII art')) {
-        systemPrompt += '\n\nIMPORTANT: Never respond with ASCII art or text banners. Keep responses direct and concise.';
-      }
-      anthropicRequest.system = systemPrompt;
+      requestBody.system = system;
     }
     
-    // Set timeout to 15 seconds
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    
-    // Make request to Anthropic API
+    // Make request to Claude API
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': API_KEY,
-        'anthropic-version': '2023-06-01',
+        'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify(anthropicRequest),
-      signal: controller.signal
+      body: JSON.stringify(requestBody)
     });
     
-    // Clear timeout
-    clearTimeout(timeoutId);
-    
-    // Check for successful response
+    // Handle errors
     if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
+      const errorText = await response.text();
+      console.error('Claude API error:', response.status, errorText);
       
       return res.status(response.status).json({
-        error: 'anthropic_api_error',
-        message: errorData?.error?.message || `API returned status ${response.status}`,
-        status: response.status
+        error: 'Claude API error',
+        status: response.status,
+        message: errorText
       });
     }
     
-    // Parse and return response
+    // Get response data
     const data = await response.json();
+    
+    // Return the response to the client
     return res.status(200).json(data);
     
   } catch (error) {
     console.error('Error in Claude API handler:', error);
     
-    // Handle timeout errors
-    if (error.name === 'AbortError') {
-      return res.status(504).json({
-        error: 'timeout',
-        message: 'Request to Claude API timed out'
-      });
-    }
-    
-    // Handle other errors
     return res.status(500).json({
-      error: 'server_error',
+      error: 'Internal server error',
       message: error.message || 'An unexpected error occurred'
     });
   }
