@@ -10,10 +10,10 @@ You need to set the following environment variables in your Vercel project:
 
 ```
 CLAUDE_API_KEY=your-anthropic-api-key
-PUSHER_APP_ID=1987246
-PUSHER_KEY=49fa5db19939b47d29b1
-PUSHER_SECRET=97ffd4c4a58012932506
-PUSHER_CLUSTER=us3
+PUSHER_APP_ID=
+PUSHER_KEY=
+PUSHER_SECRET=
+PUSHER_CLUSTER=
 ```
 
 ### 2. Required Files
