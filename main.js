@@ -9,6 +9,8 @@ let sessionId = null;
 let sessionUsers = {};
 let pollingInterval = null; // For session updates
 let lastUserMessage = ''; // Track last message to prevent duplicates
+let isConnecting = false; // Flag to prevent multiple concurrent connection attempts
+let customSessionIdInput = null; // Cache DOM reference
 
 // Startup animation text
 const startupText = 'LET THERE BE CARNAGE...';
@@ -46,6 +48,12 @@ IMPORTANT: Never respond with ASCII art text or banners. Keep responses compact 
 
 Tone is sharp, but never rushed. You are not emotional. You are deliberate and insightful.
   `
+};
+
+// Rate limiting for API calls
+const apiRateLimits = {
+  lastCalls: {},
+  minDelay: 1000 // Minimum 1 second between calls to the same endpoint
 };
 
 // Type startup text one character at a time
@@ -87,16 +95,88 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log("CARNAGE terminal initializing");
   document.body.setAttribute('data-agent', activeAgent);
   
-  document.getElementById('startupText').textContent = '';
-  typeStartup();
+  try {
+    // Check if any previous session data exists in localStorage
+    checkForExistingSession();
+    
+    // Start animation
+    document.getElementById('startupText').textContent = '';
+    typeStartup();
 
-  // Set up input handler with improved event handling
+    // Set up input handler with improved event handling
+    setupInputHandlers();
+    
+    // Handle window beforeunload to cleanup resources
+    window.addEventListener('beforeunload', cleanupBeforeUnload);
+  } catch (error) {
+    console.error('Error during initialization:', error);
+    // Try to recover by showing the chat interface
+    document.getElementById('startup').classList.add('hidden');
+    document.getElementById('chat').classList.remove('hidden');
+    addMessage('SYSTEM: Error during initialization. Some features may be limited.', 'system');
+  }
+});
+
+// Check for existing session in localStorage
+function checkForExistingSession() {
+  try {
+    const savedSession = localStorage.getItem('carnageSession');
+    if (savedSession) {
+      const sessionData = JSON.parse(savedSession);
+      if (sessionData.sessionId && sessionData.username) {
+        console.log('Found saved session:', sessionData);
+        
+        // Give option to rejoin previous session
+        setTimeout(() => {
+          if (confirm(`Rejoin previous session ${sessionData.sessionId} as ${sessionData.username}?`)) {
+            username = sessionData.username;
+            joinSession(sessionData.sessionId);
+          } else {
+            // Clear saved session if not rejoining
+            localStorage.removeItem('carnageSession');
+          }
+        }, 2000); // Wait a bit after startup animation
+      }
+    }
+  } catch (error) {
+    console.error('Error checking for existing session:', error);
+    localStorage.removeItem('carnageSession');
+  }
+}
+
+// Save current session to localStorage
+function saveSessionToLocalStorage() {
+  if (sessionId && username) {
+    try {
+      localStorage.setItem('carnageSession', JSON.stringify({
+        sessionId,
+        username,
+        timestamp: new Date().getTime()
+      }));
+    } catch (error) {
+      console.error('Error saving session to localStorage:', error);
+    }
+  }
+}
+
+// Clean up resources before page unload
+function cleanupBeforeUnload() {
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+  }
+  
+  // Save session data if in a session
+  if (sessionId) {
+    saveSessionToLocalStorage();
+  }
+}
+
+// Set up input handlers
+function setupInputHandlers() {
   const chatInput = document.getElementById('chatInput');
   
   // Handle Enter key specifically with both keydown and keypress events
   chatInput.addEventListener('keydown', function(e) {
-    console.log('Key pressed:', e.key, 'KeyCode:', e.keyCode);
-    
     // Check for Enter key (both key name and keyCode for wider compatibility)
     if ((e.key === 'Enter' || e.keyCode === 13) && this.value.trim()) {
       e.preventDefault(); // Prevent default to ensure consistent behavior
@@ -136,7 +216,7 @@ document.addEventListener('DOMContentLoaded', () => {
       chatInput.focus(); // Return focus to input after clicking
     }
   });
-});
+}
 
 // Function to set up multiplayer UI
 function setupMultiplayerUI() {
@@ -167,6 +247,23 @@ function setupMultiplayerUI() {
   document.body.appendChild(mpControls);
   
   // Add CSS for multiplayer controls
+  addMultiplayerStyles();
+  
+  // Set up event listeners for multiplayer buttons
+  document.getElementById('createSessionBtn').addEventListener('click', createSession);
+  document.getElementById('joinSessionBtn').addEventListener('click', joinSessionPrompt);
+  document.getElementById('leaveSessionBtn').addEventListener('click', leaveSession);
+  document.getElementById('createCustomSessionBtn').addEventListener('click', createCustomSession);
+  
+  // Cache DOM references
+  customSessionIdInput = document.getElementById('customSessionId');
+  
+  // Update status
+  updateStatus('Ready to connect');
+}
+
+// Add CSS styles for multiplayer UI
+function addMultiplayerStyles() {
   const style = document.createElement('style');
   style.textContent = `
     .mp-controls {
@@ -230,11 +327,17 @@ function setupMultiplayerUI() {
       font-family: inherit;
       font-size: 16px;
       cursor: pointer;
+      transition: background-color 0.2s, color 0.2s;
     }
     
     .mp-buttons button:hover, #sessionInfo button:hover, #createCustomSessionBtn:hover {
       background: var(--ui-color);
       color: black;
+    }
+    
+    .mp-buttons button:disabled, #sessionInfo button:disabled, #createCustomSessionBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
     
     .session-info {
@@ -280,31 +383,36 @@ function setupMultiplayerUI() {
     }
   `;
   document.head.appendChild(style);
-  
-  // Set up event listeners for multiplayer buttons
-  document.getElementById('createSessionBtn').addEventListener('click', createSession);
-  document.getElementById('joinSessionBtn').addEventListener('click', joinSessionPrompt);
-  document.getElementById('leaveSessionBtn').addEventListener('click', leaveSession);
-  document.getElementById('createCustomSessionBtn').addEventListener('click', createCustomSession);
-  
-  // Update status
-  updateStatus('Ready to connect');
 }
 
 // Create custom session with user-defined ID
 async function createCustomSession() {
-  const customId = document.getElementById('customSessionId').value.trim();
+  if (isConnecting) {
+    addMessage('SYSTEM: Already connecting to a session. Please wait...', 'system');
+    return;
+  }
+  
+  const customId = customSessionIdInput.value.trim();
   if (!customId) {
     addMessage('SYSTEM: Please enter a custom session ID', 'system');
     return;
   }
   
+  // Sanitize custom ID - only allow letters, numbers, and hyphens
+  if (!/^[a-zA-Z0-9-]+$/.test(customId)) {
+    addMessage('SYSTEM: Session ID can only contain letters, numbers, and hyphens', 'system');
+    return;
+  }
+  
+  isConnecting = true;
   updateStatus('Creating custom session...');
   
   try {
+    // Disable buttons during connection
+    toggleConnectionButtons(false);
+    
     // First, try to directly join the session with the custom ID
-    // This will work if the session already exists
-    const joinResponse = await fetch('/api/session', {
+    const joinResponse = await fetchWithTimeout('/api/session', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -315,7 +423,7 @@ async function createCustomSession() {
         clientId,
         username
       })
-    });
+    }, 5000); // 5 second timeout
     
     if (joinResponse.ok) {
       const data = await joinResponse.json();
@@ -326,11 +434,10 @@ async function createCustomSession() {
       }
     }
     
-    // If joining failed, the session doesn't exist
-    // Create a standard session instead
-    console.log('Custom session not found, creating a standard session...');
+    // If joining failed, create a custom session locally
+    console.log('Server-side session not found, creating client-side custom session...');
     
-    // Mock creating a custom session by directly using the custom ID
+    // Set up client-side session data
     sessionId = customId;
     clientId = clientId || generateId();
     sessionUsers = {
@@ -339,6 +446,9 @@ async function createCustomSession() {
         joinedAt: new Date().toISOString()
       }
     };
+    
+    // Save session data to localStorage
+    saveSessionToLocalStorage();
     
     // Update UI to reflect custom session
     document.getElementById('sessionIdDisplay').textContent = customId;
@@ -355,6 +465,61 @@ async function createCustomSession() {
     console.error('Error creating custom session:', error);
     updateStatus('Error: ' + error.message);
     addMessage(`SYSTEM: Error creating custom session: ${error.message}`, 'system');
+  } finally {
+    isConnecting = false;
+    toggleConnectionButtons(true);
+  }
+}
+
+// Toggle connection buttons enabled/disabled state
+function toggleConnectionButtons(enabled) {
+  const buttons = [
+    document.getElementById('createSessionBtn'),
+    document.getElementById('joinSessionBtn'),
+    document.getElementById('createCustomSessionBtn')
+  ];
+  
+  buttons.forEach(button => {
+    if (button) {
+      button.disabled = !enabled;
+    }
+  });
+}
+
+// Fetch with timeout
+async function fetchWithTimeout(resource, options = {}, timeout = 8000) {
+  // Apply rate limiting
+  const endpoint = resource.toString();
+  const now = Date.now();
+  
+  if (apiRateLimits.lastCalls[endpoint]) {
+    const timeSinceLastCall = now - apiRateLimits.lastCalls[endpoint];
+    if (timeSinceLastCall < apiRateLimits.minDelay) {
+      const waitTime = apiRateLimits.minDelay - timeSinceLastCall;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+  
+  // Update last call time
+  apiRateLimits.lastCalls[endpoint] = Date.now();
+  
+  // Create abort controller for timeout
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(resource, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeout}ms`);
+    }
+    throw error;
   }
 }
 
@@ -370,6 +535,9 @@ function handleSuccessfulJoin(data) {
   clientId = data.clientId;
   username = data.username;
   sessionUsers = data.users || {};
+  
+  // Save to localStorage
+  saveSessionToLocalStorage();
   
   // Update UI
   document.getElementById('sessionIdDisplay').textContent = sessionId;
@@ -388,11 +556,18 @@ function handleSuccessfulJoin(data) {
 
 // Create a new session
 async function createSession() {
+  if (isConnecting) {
+    addMessage('SYSTEM: Already connecting to a session. Please wait...', 'system');
+    return;
+  }
+  
+  isConnecting = true;
   updateStatus('Creating session...');
+  toggleConnectionButtons(false);
   
   try {
     // Request to create a new session
-    const response = await fetch('/api/session', {
+    const response = await fetchWithTimeout('/api/session', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -403,6 +578,13 @@ async function createSession() {
     });
     
     if (!response.ok) {
+      // If server fails, create a local session with a random ID
+      if (response.status >= 500) {
+        console.log('Server error when creating session, falling back to local session');
+        createLocalSession();
+        return;
+      }
+      
       throw new Error(`Server returned ${response.status}: ${response.statusText}`);
     }
     
@@ -418,29 +600,87 @@ async function createSession() {
     console.error('Error creating session:', error);
     updateStatus('Error: ' + error.message);
     addMessage(`SYSTEM: Error creating session: ${error.message}`, 'system');
+    
+    // Create local session as fallback
+    createLocalSession();
+  } finally {
+    isConnecting = false;
+    toggleConnectionButtons(true);
   }
+}
+
+// Create a local session with random ID when server fails
+function createLocalSession() {
+  const localSessionId = 'local-' + Math.random().toString(36).substring(2, 10);
+  console.log('Creating local session:', localSessionId);
+  
+  // Set up client-side session data
+  sessionId = localSessionId;
+  clientId = clientId || generateId();
+  sessionUsers = {
+    [clientId]: {
+      username: username,
+      joinedAt: new Date().toISOString()
+    }
+  };
+  
+  // Save to localStorage
+  saveSessionToLocalStorage();
+  
+  // Update UI
+  document.getElementById('sessionIdDisplay').textContent = localSessionId;
+  document.getElementById('sessionInfo').classList.remove('hidden');
+  updateStatus(`In local session: ${localSessionId}`);
+  
+  // Update user list
+  updateUserList(sessionUsers);
+  
+  // Add message to chat
+  addMessage(`SYSTEM: Created local session ${localSessionId}`, 'system');
 }
 
 // Join a session prompt
 function joinSessionPrompt() {
+  if (isConnecting) {
+    addMessage('SYSTEM: Already connecting to a session. Please wait...', 'system');
+    return;
+  }
+  
   const id = prompt('Enter session ID:');
   if (id) {
+    if (!/^[a-zA-Z0-9-]+$/.test(id)) {
+      addMessage('SYSTEM: Session ID can only contain letters, numbers, and hyphens', 'system');
+      return;
+    }
     joinSession(id);
   }
 }
 
 // Join a session
 async function joinSession(id) {
+  if (isConnecting) {
+    addMessage('SYSTEM: Already connecting to a session. Please wait...', 'system');
+    return;
+  }
+  
   if (!id) {
     updateStatus('Invalid session ID');
     return;
   }
   
+  isConnecting = true;
   updateStatus('Joining session...');
+  toggleConnectionButtons(false);
   
   try {
+    // For custom sessions that we know are client-side only
+    if (id.startsWith('local-') || id === customSessionIdInput?.value?.trim()) {
+      createLocalSessionWithId(id);
+      return;
+    }
+    
     // Request to join the session
-    const response = await fetch('/api/session', {
+    const response = await fetchWithTimeout('/api/session', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -455,37 +695,9 @@ async function joinSession(id) {
     
     // Check if we got a 404 (session not found)
     if (response.status === 404) {
-      console.log('Session not found, handling appropriately...');
-      
-      // If this is a custom session ID the user wants to create
-      if (id === document.getElementById('customSessionId').value.trim()) {
-        // Create a mock session with this ID
-        console.log('Creating mock session with custom ID:', id);
-        
-        sessionId = id;
-        clientId = clientId || generateId();
-        sessionUsers = {
-          [clientId]: {
-            username: username,
-            joinedAt: new Date().toISOString()
-          }
-        };
-        
-        // Update UI to reflect custom session
-        document.getElementById('sessionIdDisplay').textContent = id;
-        document.getElementById('sessionInfo').classList.remove('hidden');
-        updateStatus(`In custom session: ${id}`);
-        
-        // Update user list
-        updateUserList(sessionUsers);
-        
-        // Add message to chat
-        addMessage(`SYSTEM: Created custom session ${id}`, 'system');
-        
-        return;
-      }
-      
-      throw new Error(`Session not found (404)`);
+      console.log('Session not found, creating local session with this ID');
+      createLocalSessionWithId(id);
+      return;
     }
     
     if (!response.ok) {
@@ -506,13 +718,47 @@ async function joinSession(id) {
     updateStatus('Error: ' + error.message);
     addMessage(`SYSTEM: Error joining session: ${error.message}`, 'system');
     
-    // If this was a 404 for a custom session, create a standard one
-    if (error.message.includes('404') && 
-        id === document.getElementById('customSessionId').value.trim()) {
-      addMessage('SYSTEM: Falling back to creating a standard session...', 'system');
-      setTimeout(() => createSession(), 1000);
+    // If this was a custom session ID, create a local session with it
+    if (id === customSessionIdInput?.value?.trim()) {
+      createLocalSessionWithId(id);
     }
+  } finally {
+    isConnecting = false;
+    toggleConnectionButtons(true);
   }
+}
+
+// Create a local session with a specific ID
+function createLocalSessionWithId(id) {
+  console.log('Creating local session with ID:', id);
+  
+  // Set up client-side session data
+  sessionId = id;
+  clientId = clientId || generateId();
+  sessionUsers = {
+    [clientId]: {
+      username: username,
+      joinedAt: new Date().toISOString()
+    }
+  };
+  
+  // Save to localStorage
+  saveSessionToLocalStorage();
+  
+  // Update UI
+  document.getElementById('sessionIdDisplay').textContent = id;
+  document.getElementById('sessionInfo').classList.remove('hidden');
+  updateStatus(`In local session: ${id}`);
+  
+  // Update user list
+  updateUserList(sessionUsers);
+  
+  // Add message to chat
+  addMessage(`SYSTEM: Created local session ${id}`, 'system');
+  
+  // Reset connecting state
+  isConnecting = false;
+  toggleConnectionButtons(true);
 }
 
 // Start polling for session updates
@@ -520,6 +766,12 @@ function startPolling() {
   // Stop existing polling if any
   if (pollingInterval) {
     clearInterval(pollingInterval);
+  }
+  
+  // Don't poll for local sessions
+  if (sessionId && (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim())) {
+    console.log('Local session detected, skipping polling');
+    return;
   }
   
   // Poll every 5 seconds
@@ -531,7 +783,7 @@ function startPolling() {
     
     try {
       // Get session info
-      const response = await fetch(`/api/session?sessionId=${sessionId}`);
+      const response = await fetchWithTimeout(`/api/session?sessionId=${sessionId}`, {}, 3000);
       
       if (!response.ok) {
         console.error(`Error polling session: ${response.status}`);
@@ -552,6 +804,7 @@ function startPolling() {
       }
     } catch (error) {
       console.error('Error polling session:', error);
+      // Don't stop polling on temporary errors
     }
   }, 5000);
 }
@@ -559,6 +812,8 @@ function startPolling() {
 // Update user list
 function updateUserList(users) {
   const userList = document.getElementById('userList');
+  if (!userList) return;
+  
   userList.innerHTML = '';
   
   Object.entries(users).forEach(([id, user]) => {
@@ -569,6 +824,7 @@ function updateUserList(users) {
 // Add user to list
 function addUserToList(id, name) {
   const userList = document.getElementById('userList');
+  if (!userList) return;
   
   // Skip if already in the list
   if (document.getElementById(`user-${id}`)) {
@@ -615,28 +871,14 @@ async function leaveSession() {
   updateStatus('Leaving session...');
   
   try {
-    // For custom sessions, we can just clean up locally
-    if (document.getElementById('customSessionId').value.trim() === sessionId) {
-      // Clean up UI
-      document.getElementById('sessionInfo').classList.add('hidden');
-      updateStatus('Not in a session');
-      addMessage(`SYSTEM: You left custom session ${sessionId}`, 'system');
-      
-      // Stop polling
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
-      }
-      
-      // Clear session data
-      sessionId = null;
-      sessionUsers = {};
-      
+    // For local/custom sessions, just clean up locally
+    if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
+      cleanupLocalSession();
       return;
     }
     
     // Request to leave the session
-    const response = await fetch('/api/session', {
+    const response = await fetchWithTimeout('/api/session', {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json'
@@ -645,32 +887,39 @@ async function leaveSession() {
         sessionId,
         clientId
       })
-    });
+    }, 5000);
     
-    // Update UI regardless of server response
-    document.getElementById('sessionInfo').classList.add('hidden');
-    updateStatus('Not in a session');
-    addMessage(`SYSTEM: You left session ${sessionId}`, 'system');
-    
-    // Stop polling
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
-    }
-    
-    // Clear session data
-    sessionId = null;
-    sessionUsers = {};
+    // Clean up locally regardless of server response
+    cleanupLocalSession();
     
   } catch (error) {
     console.error('Error leaving session:', error);
     updateStatus('Error: ' + error.message);
     
-    // Clear session data anyway on error
-    sessionId = null;
-    sessionUsers = {};
-    document.getElementById('sessionInfo').classList.add('hidden');
+    // Clean up locally anyway on error
+    cleanupLocalSession();
   }
+}
+
+// Clean up a local session
+function cleanupLocalSession() {
+  // Update UI
+  document.getElementById('sessionInfo').classList.add('hidden');
+  updateStatus('Not in a session');
+  addMessage(`SYSTEM: You left session ${sessionId}`, 'system');
+  
+  // Stop polling
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+  }
+  
+  // Clear session data
+  sessionId = null;
+  sessionUsers = {};
+  
+  // Remove from localStorage
+  localStorage.removeItem('carnageSession');
 }
 
 // Update multiplayer status
@@ -688,29 +937,69 @@ async function sendMultiplayerMessage(message, askClaude = false, agentType = ac
     return;
   }
   
-  // In this simplified version, we'll just update the local UI immediately
-  // and simulate a response from Claude if requested
-  
   // Show the user's message
   const msgPrefix = username ? `${username}: ` : '';
   addMessage(msgPrefix + message, 'user');
   
-  // If asking Claude, simulate the AI response
-  if (askClaude) {
-    const thinking = showThinking(agentType);
-    
-    // Wait before responding to simulate network delay
-    setTimeout(() => {
-      thinking.clear();
+  // For local sessions, we only update the local UI
+  if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
+    // If asking Claude, get the AI response
+    if (askClaude) {
+      const thinking = showThinking(agentType);
       
-      // Call Claude API
-      askClaude(message, agentType).then(response => {
-        const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
-        addMessage(`${agentLabel}: ${response}`, agentType);
-      }).catch(error => {
-        addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
-      });
-    }, 1000);
+      // Wait before responding to simulate network delay
+      setTimeout(() => {
+        thinking.clear();
+        
+        // Call Claude API
+        askClaude(message, agentType).then(response => {
+          const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
+          addMessage(`${agentLabel}: ${response}`, agentType);
+        }).catch(error => {
+          addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
+        });
+      }, 1000);
+    }
+    return;
+  }
+  
+  // For server sessions, try to send the message to the server
+  try {
+    await fetchWithTimeout('/api/session/message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        sessionId,
+        clientId,
+        username,
+        message,
+        askClaude,
+        agentType
+      })
+    }, 5000);
+    
+    // If asking Claude, simulate the AI response
+    if (askClaude) {
+      const thinking = showThinking(agentType);
+      
+      // Wait before responding to simulate network delay
+      setTimeout(() => {
+        thinking.clear();
+        
+        // Call Claude API
+        askClaude(message, agentType).then(response => {
+          const agentLabel = agentType === 'venom' ? 'VENOM' : 'CARNAGE';
+          addMessage(`${agentLabel}: ${response}`, agentType);
+        }).catch(error => {
+          addMessage(`SYSTEM: Error getting AI response: ${error.message}`, 'system');
+        });
+      }, 1000);
+    }
+  } catch (error) {
+    console.error('Error sending message to server:', error);
+    addMessage(`SYSTEM: Error sending message to server: ${error.message}`, 'system');
   }
 }
 
@@ -799,11 +1088,22 @@ function handleCommand(command) {
       case '/name':
         // Set username
         if (args) {
+          // Validate username - only allow letters, numbers, and common symbols
+          if (!/^[a-zA-Z0-9_\-\.]{1,20}$/.test(args)) {
+            addMessage('SYSTEM: Username must be 1-20 characters and contain only letters, numbers, _, -, or .', 'system');
+            return;
+          }
+          
           const oldUsername = username;
           username = args;
           
           // Update local UI to show username change
           addMessage(`SYSTEM: You are now known as ${username} (was ${oldUsername})`, 'system');
+          
+          // Update session data in localStorage
+          if (sessionId) {
+            saveSessionToLocalStorage();
+          }
           
           // Update the user in the connected users list directly
           if (clientId) {
@@ -841,6 +1141,10 @@ function handleCommand(command) {
         // Leave the current session
         leaveSession();
         break;
+      case '/clear':
+        // Clear the chat window
+        clearChatWindow();
+        break;
       default:
         addMessage(`SYSTEM: Unknown command: ${cmd}`, 'system');
     }
@@ -856,6 +1160,15 @@ function handleCommand(command) {
   }
 }
 
+// Clear the chat window
+function clearChatWindow() {
+  const chatWindow = document.getElementById('chatWindow');
+  if (chatWindow) {
+    chatWindow.innerHTML = '';
+    addMessage('SYSTEM: Chat cleared', 'system');
+  }
+}
+
 // Update username on server and notify other users
 async function updateUsernameOnServer(oldUsername, newUsername) {
   try {
@@ -866,8 +1179,8 @@ async function updateUsernameOnServer(oldUsername, newUsername) {
 
     console.log(`Updating username from ${oldUsername} to ${newUsername}`);
     
-    // For custom sessions, we manually broadcast the message to simulate server
-    if (document.getElementById('customSessionId').value.trim() === sessionId) {
+    // For local/custom sessions, update locally
+    if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
       // Update locally first
       if (sessionUsers[clientId]) {
         sessionUsers[clientId].username = newUsername;
@@ -880,9 +1193,9 @@ async function updateUsernameOnServer(oldUsername, newUsername) {
       return;
     }
     
-    // For regular sessions, try the API if it exists
+    // For server sessions, try the API if it exists
     try {
-      const response = await fetch('/api/session/username', {
+      const response = await fetchWithTimeout('/api/session/username', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -893,7 +1206,7 @@ async function updateUsernameOnServer(oldUsername, newUsername) {
           oldUsername,
           newUsername
         })
-      });
+      }, 5000);
       
       if (!response.ok) {
         console.log('Username update API not available, using message-based approach');
@@ -919,8 +1232,13 @@ async function sendSystemMessageToAll(message) {
       return;
     }
     
+    // Local sessions don't need this
+    if (sessionId.startsWith('local-') || sessionId === customSessionIdInput?.value?.trim()) {
+      return;
+    }
+    
     // Try to use the message API to send the system message
-    await fetch('/api/session/message', {
+    await fetchWithTimeout('/api/session/message', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -931,7 +1249,7 @@ async function sendSystemMessageToAll(message) {
         message: message,
         type: 'system'
       })
-    });
+    }, 5000);
   } catch (error) {
     console.error('Error sending system message:', error);
   }
@@ -961,6 +1279,7 @@ CHAT COMMANDS:
 /claude [message] - Ask CARNAGE specifically
 /carnage [message] - Alternative way to ask CARNAGE
 /venom [message] - Ask VENOM instead
+/clear - Clear the chat window
 
 MULTIPLAYER COMMANDS:
 /create - Create a new session
@@ -981,6 +1300,8 @@ You can also type any message directly to chat or ask the current agent.
 // Add a message to the output
 function addMessage(text, from = 'system') {
   const output = document.getElementById('chatWindow');
+  if (!output) return null;
+  
   const msg = document.createElement('div');
   msg.className = 'message';
   
@@ -1004,6 +1325,8 @@ function addMessage(text, from = 'system') {
 function showThinking(agent = activeAgent) {
   const agentLabel = agent === 'venom' ? 'VENOM' : 'CARNAGE';
   const msg = addMessage(`${agentLabel} IS THINKING`, agent);
+  if (!msg) return { clear: () => {} }; // Return dummy object if message creation failed
+  
   msg.classList.add('thinking');
   
   // Add blinking dots
@@ -1024,7 +1347,9 @@ function showThinking(agent = activeAgent) {
     element: msg,
     clear: () => {
       clearInterval(interval);
-      msg.remove();
+      if (msg && msg.parentNode) {
+        msg.remove();
+      }
     }
   };
 }
@@ -1035,7 +1360,7 @@ async function checkBaseApi() {
   
   try {
     console.log('Checking base API...');
-    const response = await fetch('/api');
+    const response = await fetchWithTimeout('/api', {}, 5000);
     
     thinking.clear();
     
@@ -1062,7 +1387,7 @@ async function testApiConnection() {
   
   try {
     console.log('Testing API connection...');
-    const response = await fetch('/api/test');
+    const response = await fetchWithTimeout('/api/test', {}, 5000);
     
     thinking.clear();
     
@@ -1102,7 +1427,7 @@ async function askClaude(question, agentType = activeAgent) {
     console.log('Sending request to Claude API with agent:', agentType);
     
     // Prepare request to our API endpoint
-    const response = await fetch('/api/claude', {
+    const response = await fetchWithTimeout('/api/claude', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -1113,7 +1438,7 @@ async function askClaude(question, agentType = activeAgent) {
           { role: 'user', content: question }
         ]
       })
-    });
+    }, 30000); // Longer timeout for Claude API
     
     // Check for non-JSON responses
     const contentType = response.headers.get('content-type');
@@ -1134,7 +1459,6 @@ async function askClaude(question, agentType = activeAgent) {
     }
     
     console.log('Response received from Claude API for agent:', agentType);
-    console.log('Response content:', data?.content?.[0]?.text || 'No content');
     
     // Remove thinking indicator
     thinking.clear();
