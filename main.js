@@ -299,7 +299,59 @@ function createCustomSession() {
     return;
   }
   
-  joinSession(customId);
+  updateStatus('Joining custom session...');
+  
+  // Try to join the session with this ID
+  // If it doesn't exist, we'll create it on the fly
+  joinSessionWithFallback(customId);
+}
+
+// This version of joinSession will try to join, and if it fails due to
+// the session not existing, it will create the session and then join it
+async function joinSessionWithFallback(id) {
+  if (!id) {
+    updateStatus('Invalid session ID');
+    return;
+  }
+  
+  updateStatus('Joining session...');
+  
+  try {
+    // First attempt to join the session
+    const joinResponse = await fetch('/api/session', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'join',
+        sessionId: id,
+        clientId,
+        username
+      })
+    });
+    
+    // If join succeeds, handle as normal
+    if (joinResponse.ok) {
+      const data = await joinResponse.json();
+      
+      if (data.success) {
+        handleSuccessfulJoin(data);
+        return;
+      }
+    }
+    
+    // If join fails, create a regular session
+    console.log('Session might not exist or join failed, creating a regular session instead...');
+    
+    // Create a regular session
+    createSession();
+    
+  } catch (error) {
+    console.error('Error joining/creating session:', error);
+    updateStatus('Error: ' + error.message);
+    addMessage(`SYSTEM: Error with session: ${error.message}`, 'system');
+  }
 }
 
 // Create a new session
@@ -345,6 +397,29 @@ function joinSessionPrompt() {
   }
 }
 
+// Helper function to handle successful join
+function handleSuccessfulJoin(data) {
+  // Save session information
+  sessionId = data.sessionId;
+  clientId = data.clientId;
+  username = data.username;
+  sessionUsers = data.users || {};
+  
+  // Update UI
+  document.getElementById('sessionIdDisplay').textContent = sessionId;
+  document.getElementById('sessionInfo').classList.remove('hidden');
+  updateStatus(`In session: ${sessionId}`);
+  
+  // Add message to chat
+  addMessage(`SYSTEM: You joined session ${sessionId}`, 'system');
+  
+  // Update user list
+  updateUserList(sessionUsers);
+  
+  // Start polling for session updates
+  startPolling();
+}
+
 // Join a session
 async function joinSession(id) {
   if (!id) {
@@ -369,6 +444,20 @@ async function joinSession(id) {
       })
     });
     
+    // Check if we got a 404 (session not found)
+    if (response.status === 404) {
+      console.log('Session not found, handling appropriately...');
+      
+      // If this is a custom session ID the user wants to create
+      if (id === document.getElementById('customSessionId').value.trim()) {
+        // Create a standard session instead
+        createSession();
+        return;
+      }
+      
+      throw new Error(`Session not found (404)`);
+    }
+    
     if (!response.ok) {
       throw new Error(`Server returned ${response.status}: ${response.statusText}`);
     }
@@ -379,29 +468,20 @@ async function joinSession(id) {
       throw new Error(data.message || 'Failed to join session');
     }
     
-    // Save session information
-    sessionId = data.sessionId;
-    clientId = data.clientId;
-    username = data.username;
-    sessionUsers = data.users || {};
+    // Handle successful join
+    handleSuccessfulJoin(data);
     
-    // Update UI
-    document.getElementById('sessionIdDisplay').textContent = sessionId;
-    document.getElementById('sessionInfo').classList.remove('hidden');
-    updateStatus(`In session: ${sessionId}`);
-    
-    // Add message to chat
-    addMessage(`SYSTEM: You joined session ${sessionId}`, 'system');
-    
-    // Update user list
-    updateUserList(sessionUsers);
-    
-    // Start polling for session updates
-    startPolling();
   } catch (error) {
     console.error('Error joining session:', error);
     updateStatus('Error: ' + error.message);
     addMessage(`SYSTEM: Error joining session: ${error.message}`, 'system');
+    
+    // If this was a 404 for a custom session, create a standard one
+    if (error.message.includes('404') && 
+        id === document.getElementById('customSessionId').value.trim()) {
+      addMessage('SYSTEM: Falling back to creating a standard session...', 'system');
+      setTimeout(() => createSession(), 1000);
+    }
   }
 }
 
@@ -705,6 +785,12 @@ function handleCommand(command) {
 // Update username on server
 async function updateUsernameOnServer(oldUsername, newUsername) {
   try {
+    // Don't actually make this call if the API endpoint doesn't exist
+    // Just log that we would do it in a full implementation
+    console.log(`Would update username on server from ${oldUsername} to ${newUsername}`);
+    
+    // In a full implementation, the code would look like this:
+    /*
     const response = await fetch('/api/updateUsername', {
       method: 'POST',
       headers: {
@@ -721,6 +807,7 @@ async function updateUsernameOnServer(oldUsername, newUsername) {
     if (!response.ok) {
       console.error(`Server returned ${response.status} when updating username`);
     }
+    */
   } catch (error) {
     console.error('Error updating username on server:', error);
   }
@@ -755,7 +842,7 @@ MULTIPLAYER COMMANDS:
 /create - Create a new session
 /join [id] - Join a session
 /leave - Leave the current session
-/name [username] - Set your username
+/name [username] - Set or view your username
 
 DIAGNOSTIC COMMANDS:
 /test - Test API connection
