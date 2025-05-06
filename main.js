@@ -9,8 +9,8 @@ let channel = null;
 const startupText = 'HERE COMES CARNAGE...';
 
 // Replace with your Pusher credentials
-const PUSHER_KEY = 'YOUR_PUSHER_KEY';
-const PUSHER_CLUSTER = 'YOUR_PUSHER_CLUSTER';
+const PUSHER_KEY = '49fa5db19939b47d29b1';
+const PUSHER_CLUSTER = 'us3';
 
 const systemPrompts = {
   carnage: `
