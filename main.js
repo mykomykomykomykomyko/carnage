@@ -10,7 +10,7 @@ let sessionUsers = {};
 let pollingInterval = null; // For session updates
 
 // Startup animation text
-const startupText = 'HERE COMES CARNAGE...';
+const startupText = 'LET THERE BE CARNAGE...';
 
 // System prompts for different agents
 const systemPrompts = {
