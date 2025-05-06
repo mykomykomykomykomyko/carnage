@@ -8,6 +8,7 @@ let username = null;
 let sessionId = null;
 let sessionUsers = {};
 let pollingInterval = null; // For session updates
+let lastUserMessage = ''; // Track last message to prevent duplicates
 
 // Startup animation text
 const startupText = 'LET THERE BE CARNAGE...';
@@ -63,8 +64,22 @@ function typeStartup() {
       
       // Add multiplayer controls after startup
       setupMultiplayerUI();
+      
+      // Set default username based on timestamp to ensure uniqueness
+      setDefaultUsername();
     }, 1500);
   }
+}
+
+// Set a default username on startup
+function setDefaultUsername() {
+  // Use timestamp and random number to ensure uniqueness
+  const timestamp = new Date().getTime().toString().slice(-4);
+  const random = Math.floor(Math.random() * 1000);
+  username = `user-${timestamp}${random}`;
+  
+  // Log the auto-generated username
+  console.log('Auto-generated username:', username);
 }
 
 // Initialize when page loads
@@ -88,7 +103,16 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log('Enter detected, processing command:', this.value.trim());
       
       const command = this.value.trim();
-      handleCommand(command);
+      
+      // Check for duplicate message
+      if (command === lastUserMessage) {
+        console.log('Duplicate message detected. Not sending again.');
+        addMessage('SYSTEM: Duplicate message detected. Not sending again.', 'system');
+      } else {
+        handleCommand(command);
+        lastUserMessage = command; // Update last message
+      }
+      
       this.value = '';
     }
   });
@@ -98,7 +122,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const inputValue = chatInput.value.trim();
     if (inputValue) {
       console.log('ENTER clicked, processing command:', inputValue);
-      handleCommand(inputValue);
+      
+      // Check for duplicate message
+      if (inputValue === lastUserMessage) {
+        console.log('Duplicate message detected. Not sending again.');
+        addMessage('SYSTEM: Duplicate message detected. Not sending again.', 'system');
+      } else {
+        handleCommand(inputValue);
+        lastUserMessage = inputValue; // Update last message
+      }
+      
       chatInput.value = '';
       chatInput.focus(); // Return focus to input after clicking
     }
@@ -117,6 +150,10 @@ function setupMultiplayerUI() {
     <div class="mp-buttons">
       <button id="createSessionBtn">CREATE SESSION</button>
       <button id="joinSessionBtn">JOIN SESSION</button>
+    </div>
+    <div id="customSessionSection">
+      <input type="text" id="customSessionId" placeholder="Custom session ID" />
+      <button id="createCustomSessionBtn">CREATE CUSTOM</button>
     </div>
     <div id="sessionInfo" class="session-info hidden">
       <div class="session-id">Session ID: <span id="sessionIdDisplay"></span></div>
@@ -169,7 +206,23 @@ function setupMultiplayerUI() {
       margin-bottom: 15px;
     }
     
-    .mp-buttons button, #sessionInfo button {
+    #customSessionSection {
+      margin: 15px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    #customSessionId {
+      background: black;
+      color: var(--ui-color);
+      border: 1px solid var(--ui-color);
+      padding: 5px;
+      font-family: inherit;
+      outline: none;
+    }
+    
+    .mp-buttons button, #sessionInfo button, #createCustomSessionBtn {
       background: black;
       color: var(--ui-color);
       border: 1px solid var(--ui-color);
@@ -179,7 +232,7 @@ function setupMultiplayerUI() {
       cursor: pointer;
     }
     
-    .mp-buttons button:hover, #sessionInfo button:hover {
+    .mp-buttons button:hover, #sessionInfo button:hover, #createCustomSessionBtn:hover {
       background: var(--ui-color);
       color: black;
     }
@@ -232,12 +285,21 @@ function setupMultiplayerUI() {
   document.getElementById('createSessionBtn').addEventListener('click', createSession);
   document.getElementById('joinSessionBtn').addEventListener('click', joinSessionPrompt);
   document.getElementById('leaveSessionBtn').addEventListener('click', leaveSession);
-  
-  // Initialize username
-  username = 'user-' + Math.floor(Math.random() * 10000).toString();
+  document.getElementById('createCustomSessionBtn').addEventListener('click', createCustomSession);
   
   // Update status
   updateStatus('Ready to connect');
+}
+
+// Create custom session with user-defined ID
+function createCustomSession() {
+  const customId = document.getElementById('customSessionId').value.trim();
+  if (!customId) {
+    addMessage('SYSTEM: Please enter a custom session ID', 'system');
+    return;
+  }
+  
+  joinSession(customId);
 }
 
 // Create a new session
@@ -596,10 +658,17 @@ function handleCommand(command) {
       case '/name':
         // Set username
         if (args) {
+          const oldUsername = username;
           username = args;
-          addMessage(`SYSTEM: You are now known as ${username}`, 'system');
+          addMessage(`SYSTEM: You are now known as ${username} (was ${oldUsername})`, 'system');
+          
+          // Update username on server if in a session
+          if (sessionId && clientId) {
+            updateUsernameOnServer(oldUsername, username);
+          }
         } else {
-          addMessage('SYSTEM: Please provide a username', 'system');
+          addMessage(`SYSTEM: Your current username is ${username}`, 'system');
+          addMessage('SYSTEM: To change it, use "/name NewUsername"', 'system');
         }
         break;
       case '/create':
@@ -630,6 +699,30 @@ function handleCommand(command) {
       // In single player, ask Claude directly and display the response
       askClaudeAndDisplayResponse(command);
     }
+  }
+}
+
+// Update username on server
+async function updateUsernameOnServer(oldUsername, newUsername) {
+  try {
+    const response = await fetch('/api/updateUsername', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        sessionId,
+        clientId,
+        oldUsername,
+        newUsername
+      })
+    });
+    
+    if (!response.ok) {
+      console.error(`Server returned ${response.status} when updating username`);
+    }
+  } catch (error) {
+    console.error('Error updating username on server:', error);
   }
 }
 
